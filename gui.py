@@ -39,6 +39,17 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # no console pop-up on W
 
 ERROR_LINE = re.compile(r"^(Lexical|Syntax|Semantic|Runtime) error at line (\d+), column (\d+): (.*)$")
 
+KEYWORDS = ("store", "set", "input", "into", "display", "if", "then", "otherwise",
+            "repeat", "times", "while", "function")
+# Order matters: later patterns are applied on top of earlier ones (a # inside a string is not a comment)
+SYNTAX = [
+    ("keyword", re.compile(r"\b(" + "|".join(KEYWORDS) + r")\b")),
+    ("function", re.compile(r"\b[A-Za-z_]\w*(?=\s*\()")),
+    ("number", re.compile(r"\b\d+\b")),
+    ("comment", re.compile(r"#[^\n]*")),
+    ("string", re.compile(r'"[^"\n]*"?')),
+]
+
 # ---------------------------------------------------------------- look
 
 ctk.set_appearance_mode("dark")
@@ -58,6 +69,13 @@ COLORS = {
     "red": "#f47067",
     "yellow": "#e3b341",
     "ok": "#56d364",
+    "keyword": "#ff7ab2",
+    "function": "#79c0ff",
+    "number": "#ffa657",
+    "string": "#a5d6a7",
+    "comment": "#6e7f94",
+    "line_numbers": "#4d5d70",
+    "error_line": "#3b1d22",
 }
 
 
@@ -141,6 +159,12 @@ class CompilerStudio:
 
         self.editor = self._text_widget(panel, editable=True)
         self.editor.master.grid(row=1, column=0, sticky="nsew", padx=14)
+        self._add_line_numbers(self.editor)
+        for tag in ("keyword", "function", "number", "comment", "string"):
+            self.editor.tag_configure(tag, foreground=COLORS[tag])
+        self.editor.tag_configure("error_line", background=COLORS["error_line"])
+        self.editor.tag_raise("sel")
+        self.editor.bind("<<Modified>>", self._on_edit)
 
         ctk.CTkLabel(panel, text="Program input  (one value per line, used by input statements)",
                      text_color=COLORS["muted"], font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w",
@@ -189,6 +213,72 @@ class CompilerStudio:
             text.configure(state="disabled")
         return text
 
+    # ------------------------------------------------------------ code editor
+
+    def _add_line_numbers(self, text):
+        """A canvas left of the editor that shows the visible line numbers."""
+        frame = text.master
+        self.gutter = tk.Canvas(frame, width=44, background=COLORS["editor"], highlightthickness=0, borderwidth=0)
+        self.gutter.grid(row=0, column=0, sticky="nsw")
+        text.grid_configure(padx=(44, 0))
+        scroll_set = text.cget("yscrollcommand")
+
+        def on_scroll(first, last):
+            self.root.tk.call(scroll_set, first, last)  # keep the scrollbar in step
+            self._draw_line_numbers()
+
+        text.configure(yscrollcommand=on_scroll)
+        text.bind("<Configure>", lambda e: self._draw_line_numbers(), add=True)
+
+    def _draw_line_numbers(self):
+        self.gutter.delete("all")
+        index = self.editor.index("@0,0")
+        while True:
+            info = self.editor.dlineinfo(index)
+            if info is None:
+                break
+            number = index.split(".")[0]
+            self.gutter.create_text(36, info[1] + info[3] // 2, anchor="e", text=number,
+                                    fill=COLORS["line_numbers"], font=self.mono)
+            index = self.editor.index(index + "+1line")
+            if self.editor.compare(index, "==", "end"):
+                break
+
+    def _on_edit(self, _event=None):
+        if not self.editor.edit_modified():
+            return
+        self.editor.edit_modified(False)
+        self.editor.tag_remove("error_line", "1.0", "end")  # old error marks no longer match the text
+        if getattr(self, "_highlight_job", None):
+            self.root.after_cancel(self._highlight_job)
+        self._highlight_job = self.root.after(120, self._highlight)
+        self._draw_line_numbers()
+
+    def _highlight(self):
+        self._highlight_job = None
+        code = self.editor.get("1.0", "end-1c")
+        for tag, _ in SYNTAX:
+            self.editor.tag_remove(tag, "1.0", "end")
+        for tag, pattern in SYNTAX:
+            for match in pattern.finditer(code):
+                start, end = "1.0+%dc" % match.start(), "1.0+%dc" % match.end()
+                if tag in ("comment", "string"):
+                    for other, _ in SYNTAX:  # strings and comments win over anything inside them
+                        self.editor.tag_remove(other, start, end)
+                self.editor.tag_add(tag, start, end)
+
+    def mark_errors(self, problems):
+        self.editor.tag_remove("error_line", "1.0", "end")
+        for match in problems:
+            line = match.group(2)
+            self.editor.tag_add("error_line", line + ".0", line + ".0 lineend+1c")
+
+    def go_to(self, line, column):
+        index = "%s.%d" % (line, max(int(column) - 1, 0))
+        self.editor.mark_set("insert", index)
+        self.editor.see(index)
+        self.editor.focus_set()
+
     # ------------------------------------------------------------ helpers
 
     def _load_start_program(self):
@@ -197,6 +287,8 @@ class CompilerStudio:
                 self.editor.insert("1.0", f.read())
             self.file_label.configure(text="examples/input.txt")
         self.stdin_box.insert("1.0", "Hafsa\n21")
+        self.editor.edit_reset()
+        self._highlight()
 
     def _write(self, view, text, tag=None):
         widget = self.views[view]
@@ -347,10 +439,16 @@ class CompilerStudio:
                 continue  # the status bar shows the count
             elif line.strip() and not line.startswith("Picked up JAVA_TOOL_OPTIONS"):
                 self._write("Problems", line + "\n", "muted")
-        for match in problems:
+        view = self.views["Problems"]
+        for number, match in enumerate(problems):
             kind, line, column, message = match.groups()
-            self._write("Problems", "%s error  line %s, col %s\n" % (kind, line, column), "error")
-            self._write("Problems", "    %s\n\n" % message)
+            link = "problem%d" % number  # click a problem to jump to its line in the editor
+            self._write("Problems", "%s error  line %s, col %s\n" % (kind, line, column), ("error", link))
+            self._write("Problems", "    %s\n\n" % message, link)
+            view.tag_bind(link, "<Button-1>", lambda e, l=line, c=column: self.go_to(l, c))
+            view.tag_bind(link, "<Enter>", lambda e: view.configure(cursor="hand2"))
+            view.tag_bind(link, "<Leave>", lambda e: view.configure(cursor=""))
+        self.mark_errors(problems)
 
         output = "".join(sections["output"] + sections["other"])
         if output:
