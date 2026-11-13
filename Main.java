@@ -5,34 +5,45 @@ import java_cup.runtime.DefaultSymbolFactory;
 /**
  * BeginnerScript compiler driver.
  *
- * Usage: java Main program.txt
+ * Usage: java Main [--tree] program.txt
+ *
+ *   --tree   print the abstract syntax tree built by the parser
  *
  * Exit codes: 0 = no errors, 1 = errors in the program, 2 = bad command line or file.
  */
 public class Main {
   @SuppressWarnings("deprecation") // CUP marks its DefaultSymbolFactory deprecated, but it is the right one for plain Symbols
   public static void main(String[] args) {
-    if (args.length != 1) {
-      System.err.println("Usage: java Main <program-file>");
-      System.err.println("Example: java Main input.txt");
-      System.exit(2);
+    boolean showTree = false;
+    String path = null;
+    for (String arg : args) {
+      if (arg.equals("--tree")) showTree = true;
+      else if (arg.startsWith("--") || path != null) usage("Unknown option: " + arg);
+      else path = arg;
     }
+    if (path == null) usage(null);
 
-    File file = new File(args[0]);
+    File file = new File(path);
     if (!file.isFile()) {
-      System.err.println("File not found: " + args[0]);
+      System.err.println("File not found: " + path);
       System.exit(2);
     }
 
     try (Reader in = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
       MyScanner scanner = new MyScanner(in);
       parser parser = new parser(scanner, new DefaultSymbolFactory());
-      parser.parse();
+      java_cup.runtime.Symbol result = parser.parse();
 
       int errors = scanner.errors.size() + parser.errors.size();
       if (errors > 0) {
         System.err.println(errors + (errors == 1 ? " error" : " errors") + " found in " + file.getName());
         System.exit(1);
+      }
+      // Only use the tree when parsing succeeded (after errors the result is incomplete)
+      Ast.Program program = (Ast.Program) result.value;
+      if (showTree) {
+        System.out.println("=== Syntax tree ===");
+        System.out.print(Ast.toTree(program));
       }
       System.out.println("No errors found in " + file.getName());
     } catch (IOException e) {
@@ -42,5 +53,12 @@ public class Main {
       System.err.println("Internal compiler error: " + e);
       System.exit(1);
     }
+  }
+
+  private static void usage(String problem) {
+    if (problem != null) System.err.println(problem);
+    System.err.println("Usage: java Main [--tree] <program-file>");
+    System.err.println("Example: java Main --tree input.txt");
+    System.exit(2);
   }
 }
