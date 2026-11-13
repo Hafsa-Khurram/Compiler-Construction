@@ -213,19 +213,21 @@ public final class Ast {
     }
   }
 
-  /** function name() [ ... ] */
+  /** function name(param, ...) [ ... ] */
   public static final class Function extends Stmt {
     public final String name;
+    public final List<String> params;
     public final List<Stmt> body;
 
-    public Function(int line, int column, String name, List<Stmt> body) {
+    public Function(int line, int column, String name, List<String> params, List<Stmt> body) {
       super(line, column);
       this.name = name;
+      this.params = params;
       this.body = body;
     }
 
     public String label() {
-      return "Function " + name + "()";
+      return "Function " + name + "(" + String.join(", ", params) + ")";
     }
 
     public List<Node> children() {
@@ -233,17 +235,23 @@ public final class Ast {
     }
   }
 
-  /** name(); */
+  /** name(argument, ...); */
   public static final class Call extends Stmt {
     public final String name;
+    public final List<Expr> args;
 
-    public Call(int line, int column, String name) {
+    public Call(int line, int column, String name, List<Expr> args) {
       super(line, column);
       this.name = name;
+      this.args = args;
     }
 
     public String label() {
-      return "Call " + name + "()";
+      return "Call " + name + "()" + (args.isEmpty() ? "" : " with " + args.size() + (args.size() == 1 ? " argument" : " arguments"));
+    }
+
+    public List<Node> children() {
+      return new ArrayList<>(args);
     }
   }
 

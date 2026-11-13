@@ -128,11 +128,22 @@ public class Semantic {
       if (!topLevel) {
         error(f, "function '" + f.name + "' must be defined at the top level of the program, not inside a block");
       }
-      checkBlock(f.body, new Scope(allGlobals), false);
+      // Parameters are local variables of the function
+      Scope local = new Scope(allGlobals);
+      for (String p : f.params) {
+        if (local.names.containsKey(p)) error(f, "function '" + f.name + "' has two parameters called '" + p + "'");
+        local.names.put(p, f);
+      }
+      checkBlock(f.body, local, false);
     } else if (s instanceof Ast.Call) {
       Ast.Call call = (Ast.Call) s;
-      if (!functions.containsKey(call.name)) {
+      for (Ast.Expr arg : call.args) checkExpr(arg, scope);
+      Ast.Function f = functions.get(call.name);
+      if (f == null) {
         error(call, "function '" + call.name + "' is not defined" + suggestion(call.name, new ArrayList<>(functions.keySet())));
+      } else if (f.params.size() != call.args.size()) {
+        error(call, "function '" + call.name + "' needs " + count(f.params.size(), "argument")
+            + " but was given " + call.args.size());
       }
     }
   }
@@ -188,6 +199,10 @@ public class Semantic {
   private void error(Ast.Node at, String message) {
     errorNodes.add(at);
     errorTexts.add("Semantic error at line " + at.line + ", column " + at.column + ": " + message);
+  }
+
+  private static String count(int n, String word) {
+    return n + " " + word + (n == 1 ? "" : "s");
   }
 
   /** " (did you mean 'welcome'?)" when a known name differs only in upper/lower case. */

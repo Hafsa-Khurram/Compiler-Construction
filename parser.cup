@@ -62,6 +62,8 @@ non terminal List<Ast.Stmt> stmt_list, block;
 non terminal Ast.Stmt stmt;
 non terminal Ast.Call func_call;
 non terminal Ast.Expr expr, add_expr, mul_expr, rel_expr, primary;
+non terminal List<String> param_list, params;
+non terminal List<Ast.Expr> arg_list, args;
 
 /* ---------- Start Symbol ---------- */
 start with program;
@@ -93,8 +95,8 @@ stmt ::= STORE:k ID:n SEMI
          {: RESULT = new Ast.While(kleft + 1, kright + 1, c, b); :}
        | REPEAT:k NUM:n TIMES block:b
          {: RESULT = new Ast.Repeat(kleft + 1, kright + 1, n, b); :}
-       | FUNCTION:k ID:n LPAREN RPAREN block:b
-         {: RESULT = new Ast.Function(kleft + 1, kright + 1, n, b); :}
+       | FUNCTION:k ID:n LPAREN param_list:p RPAREN block:b
+         {: RESULT = new Ast.Function(kleft + 1, kright + 1, n, p, b); :}
        | func_call:c SEMI
          {: RESULT = c; :}
        /* Error recovery: skip to the next ';' and keep parsing, so every error is reported */
@@ -106,9 +108,35 @@ block ::= LBRACK stmt_list:l RBRACK
           {: RESULT = l; :}
         ;
 
-func_call ::= ID:n LPAREN RPAREN
-              {: RESULT = new Ast.Call(nleft + 1, nright + 1, n); :}
+func_call ::= ID:n LPAREN arg_list:a RPAREN
+              {: RESULT = new Ast.Call(nleft + 1, nright + 1, n, a); :}
             ;
+
+/* Function parameters: function greet(name, age) [ ... ] */
+param_list ::= params:p
+               {: RESULT = p; :}
+             | /* no parameters */
+               {: RESULT = new ArrayList<String>(); :}
+             ;
+
+params ::= params:p COMMA ID:n
+           {: p.add(n); RESULT = p; :}
+         | ID:n
+           {: List<String> p = new ArrayList<>(); p.add(n); RESULT = p; :}
+         ;
+
+/* Call arguments: greet("Hafsa", 21); */
+arg_list ::= args:a
+             {: RESULT = a; :}
+           | /* no arguments */
+             {: RESULT = new ArrayList<Ast.Expr>(); :}
+           ;
+
+args ::= args:a COMMA expr:e
+         {: a.add(e); RESULT = a; :}
+       | expr:e
+         {: List<Ast.Expr> a = new ArrayList<>(); a.add(e); RESULT = a; :}
+       ;
 
 /* ---------- Expressions ---------- */
 

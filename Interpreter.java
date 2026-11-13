@@ -85,18 +85,23 @@ public class Interpreter {
       Ast.Repeat st = (Ast.Repeat) s;
       for (int i = 0; i < st.times; i++) execBlock(st.body, locals);
     } else if (s instanceof Ast.Call) {
-      call((Ast.Call) s);
+      call((Ast.Call) s, locals);
     }
     // Function definitions were registered in run(); they do nothing when reached
   }
 
-  private void call(Ast.Call call) {
+  private void call(Ast.Call call, Map<String, Object> callerLocals) {
     Ast.Function f = functions.get(call.name);
     if (++callDepth > MAX_CALL_DEPTH) {
       throw new RuntimeError(call, "too many nested calls; does '" + call.name + "' keep calling itself?");
     }
+    // Each call gets its own local variables; parameters start with the argument values
+    Map<String, Object> locals = new HashMap<>();
+    for (int i = 0; i < f.params.size(); i++) {
+      locals.put(f.params.get(i), eval(call.args.get(i), callerLocals));
+    }
     try {
-      execBlock(f.body, new HashMap<>());
+      execBlock(f.body, locals);
     } finally {
       callDepth--;
     }
