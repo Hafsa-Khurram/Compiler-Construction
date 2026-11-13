@@ -49,6 +49,16 @@ public class Main {
       }
       // Only use the tree when parsing succeeded (after errors the result is incomplete)
       Ast.Program program = (Ast.Program) result.value;
+
+      // Semantic analysis: names, scopes and simple type checks
+      Semantic semantic = new Semantic();
+      semantic.check(program);
+      for (String error : semantic.errors) System.err.println(error);
+      if (!semantic.errors.isEmpty()) {
+        int n = semantic.errors.size();
+        System.err.println(n + (n == 1 ? " error" : " errors") + " found in " + file.getName());
+        System.exit(1);
+      }
       if (showTree) {
         System.out.println("=== Syntax tree ===");
         System.out.print(Ast.toTree(program));
