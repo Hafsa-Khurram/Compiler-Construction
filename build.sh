@@ -11,4 +11,4 @@ java -jar lib/java-cup-11b.jar -destdir build/gen parser.cup
 echo "[3/3] javac"
 javac -nowarn -encoding UTF-8 -cp lib/java-cup-11b-runtime.jar -d build/classes *.java build/gen/*.java
 echo
-echo "Build OK. Run a program with:  ./run.sh input.txt"
+echo "Build OK. Run a program with:  ./run.sh examples/input.txt"

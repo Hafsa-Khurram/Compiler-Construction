@@ -1,0 +1,25 @@
+# Loops in BeginnerScript: while and repeat
+
+store count;
+store total;
+
+# Add up the numbers 1 to 10 with a while loop
+set count = 1;
+set total = 0;
+while count <= 10 [
+  set total = total + count;
+  set count = count + 1;
+]
+display ["The sum of 1 to 10 is " + total];
+
+# Multiplication table of 7 with a while loop
+set count = 1;
+while count <= 5 [
+  display ["7 x " + count + " = " + 7 * count];
+  set count = count + 1;
+]
+
+# repeat runs a block a fixed number of times
+repeat 3 times [
+  display ["BeginnerScript makes loops easy!"];
+]

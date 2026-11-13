@@ -100,7 +100,7 @@ public class Main {
   private static void usage(String problem) {
     if (problem != null) System.err.println(problem);
     System.err.println("Usage: java Main [--tokens] [--tree] [--check] <program-file>");
-    System.err.println("Example: java Main input.txt");
+    System.err.println("Example: java Main examples/input.txt");
     System.exit(2);
   }
 }

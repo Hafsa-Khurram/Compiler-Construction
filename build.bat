@@ -12,7 +12,7 @@ java -jar lib\java-cup-11b.jar -destdir build\gen parser.cup || goto :error
 echo [3/3] javac
 javac -nowarn -encoding UTF-8 -cp lib\java-cup-11b-runtime.jar -d build\classes *.java build\gen\*.java || goto :error
 echo.
-echo Build OK. Run a program with:  run.bat input.txt
+echo Build OK. Run a program with:  run.bat examples\input.txt
 exit /b 0
 
 :error

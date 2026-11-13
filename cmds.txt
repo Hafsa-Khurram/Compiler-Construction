@@ -1,8 +1,8 @@
 build.bat          (Windows)  or  ./build.sh   (macOS / Linux)
-run.bat input.txt  (Windows)  or  ./run.sh input.txt
+run.bat examples\input.txt  (Windows)  or  ./run.sh examples/input.txt
 
 What build does (JFlex and CUP are bundled in lib\):
 java -jar lib/jflex-full-1.9.1.jar -d build/gen scanner.jflex
 java -jar lib/java-cup-11b.jar -destdir build/gen parser.cup
 javac -cp lib/java-cup-11b-runtime.jar -d build/classes *.java build/gen/*.java
-java -cp lib/java-cup-11b-runtime.jar;build/classes Main input.txt
+java -cp lib/java-cup-11b-runtime.jar;build/classes Main examples/input.txt
