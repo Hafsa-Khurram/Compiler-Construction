@@ -5,8 +5,9 @@ import java_cup.runtime.DefaultSymbolFactory;
 /**
  * BeginnerScript compiler driver.
  *
- * Usage: java Main [--tree] program.txt
+ * Usage: java Main [--tokens] [--tree] program.txt
  *
+ *   --tokens print every token found by the scanner (lexical analysis)
  *   --tree   print the abstract syntax tree built by the parser
  *
  * Exit codes: 0 = no errors, 1 = errors in the program, 2 = bad command line or file.
@@ -14,10 +15,12 @@ import java_cup.runtime.DefaultSymbolFactory;
 public class Main {
   @SuppressWarnings("deprecation") // CUP marks its DefaultSymbolFactory deprecated, but it is the right one for plain Symbols
   public static void main(String[] args) {
+    boolean showTokens = false;
     boolean showTree = false;
     String path = null;
     for (String arg : args) {
-      if (arg.equals("--tree")) showTree = true;
+      if (arg.equals("--tokens")) showTokens = true;
+      else if (arg.equals("--tree")) showTree = true;
       else if (arg.startsWith("--") || path != null) usage("Unknown option: " + arg);
       else path = arg;
     }
@@ -30,6 +33,11 @@ public class Main {
     }
 
     try (Reader in = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
+      MyScanner.showTokens = showTokens;
+      if (showTokens) {
+        System.out.println("=== Tokens ===");
+        System.out.println("line:col  token      text");
+      }
       MyScanner scanner = new MyScanner(in);
       parser parser = new parser(scanner, new DefaultSymbolFactory());
       java_cup.runtime.Symbol result = parser.parse();
@@ -57,8 +65,8 @@ public class Main {
 
   private static void usage(String problem) {
     if (problem != null) System.err.println(problem);
-    System.err.println("Usage: java Main [--tree] <program-file>");
-    System.err.println("Example: java Main --tree input.txt");
+    System.err.println("Usage: java Main [--tokens] [--tree] <program-file>");
+    System.err.println("Example: java Main --tokens --tree input.txt");
     System.exit(2);
   }
 }
