@@ -1,0 +1,68 @@
+import java_cup.runtime.*;
+
+/* ---------- Terminals ---------- */
+terminal STORE, SET, INPUT, INTO, DISPLAY;
+terminal IF, THEN, OTHERWISE, REPEAT, TIMES, WHILE, FUNCTION;
+terminal ASSIGN, PLUS, MINUS, MULT, DIV;
+terminal LPAREN, RPAREN, LBRACK, RBRACK, SEMI, COMMA;
+terminal GT, LT, GE, LE, EQ, NE;
+terminal String ID;
+terminal Integer NUM;
+terminal String STRING;
+
+/* ---------- Non-Terminals ---------- */
+non terminal program, stmt_list, stmt, block, func_call;
+non terminal Integer expr, add_expr, mul_expr, rel_expr, primary;
+
+/* ---------- Start Symbol ---------- */
+start with program;
+
+/* ---------- Grammar Rules ---------- */
+
+program ::= stmt_list;
+
+stmt_list ::= stmt_list stmt
+            | stmt
+            ;
+
+stmt ::= STORE ID SEMI
+       | SET ID ASSIGN expr SEMI
+       | INPUT STRING INTO ID SEMI
+       | DISPLAY LBRACK expr RBRACK SEMI
+       | IF rel_expr THEN block OTHERWISE block
+       | WHILE rel_expr block
+       | REPEAT NUM TIMES block
+       | FUNCTION ID LPAREN RPAREN block
+       | func_call SEMI
+       ;
+
+block ::= LBRACK stmt_list RBRACK;
+
+func_call ::= ID LPAREN RPAREN;
+
+/* ---------- Expressions ---------- */
+
+expr ::= add_expr;
+
+add_expr ::= add_expr PLUS mul_expr
+           | add_expr MINUS mul_expr
+           | mul_expr
+           ;
+
+mul_expr ::= mul_expr MULT primary
+           | mul_expr DIV primary
+           | primary
+           ;
+
+primary ::= ID
+          | NUM
+          | STRING
+          ;
+
+rel_expr ::= expr GT expr
+           | expr LT expr
+           | expr GE expr
+           | expr LE expr
+           | expr EQ expr
+           | expr NE expr
+           ;

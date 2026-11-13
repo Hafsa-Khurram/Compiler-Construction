@@ -1,0 +1,123 @@
+import java_cup.runtime.*;
+
+/* ---------- Parser Code ---------- */
+parser code {:
+    public java.util.HashMap<String, Integer> symbolTable = new java.util.HashMap<>();
+
+    public void report_error(String msg, Object info) {
+        System.err.print("Error: " + msg);
+        if (info instanceof Symbol) {
+            Symbol s = (Symbol) info;
+            System.err.println(" at line " + (s.left + 1) + ", column " + (s.right + 1));
+        } else {
+            System.err.println();
+        }
+    }
+:};
+
+/* ---------- Terminals ---------- */
+terminal STORE, SET, INPUT, INTO, DISPLAY;
+terminal IF, THEN, OTHERWISE, REPEAT, TIMES, WHILE, FUNCTION;
+terminal ASSIGN, PLUS, MINUS, MULT, DIV;
+terminal LPAREN, RPAREN, LBRACK, RBRACK, SEMI, COMMA;
+terminal GT, LT, GE, LE, EQ, NE;
+terminal String ID;
+terminal Integer NUM;
+terminal String STRING;
+
+/* ---------- Non-Terminals ---------- */
+non terminal program, stmt_list, stmt, block, func_call;
+non terminal Integer expr, add_expr, mul_expr, rel_expr, primary;
+
+/* ---------- Start Symbol ---------- */
+start with program;
+
+/* ---------- Grammar Rules ---------- */
+
+program ::= stmt_list;
+
+stmt_list ::= stmt_list stmt
+            | stmt
+            ;
+
+stmt ::= STORE ID:a SEMI
+        {:
+            symbolTable.put(a, 0);
+            System.out.println("Declared variable: " + a);
+        :}
+       | SET ID:a ASSIGN expr:x SEMI
+        {:
+            symbolTable.put(a, x);
+            System.out.println("Assigned: " + a + " = " + x);
+        :}
+       | INPUT STRING INTO ID:a SEMI
+        {:
+            symbolTable.put(a, 0); // Simulated input
+            System.out.println("Input simulated for variable: " + a);
+        :}
+       | DISPLAY LBRACK expr:x RBRACK SEMI
+        {:
+            System.out.println("Output: " + x);
+        :}
+       | IF rel_expr:x THEN block OTHERWISE block
+       | WHILE rel_expr:x block
+       | REPEAT NUM TIMES block
+       | FUNCTION ID LPAREN RPAREN block
+       | func_call SEMI
+       ;
+
+block ::= LBRACK stmt_list RBRACK;
+
+func_call ::= ID LPAREN RPAREN;
+
+/* ---------- Expressions ---------- */
+
+expr ::= add_expr:x
+        {: RESULT = x; :}
+        ;
+
+add_expr ::= add_expr:x PLUS mul_expr:y
+            {: RESULT = x + y; :}
+           | add_expr:x MINUS mul_expr:y
+            {: RESULT = x - y; :}
+           | mul_expr:x
+            {: RESULT = x; :}
+           ;
+
+mul_expr ::= mul_expr:x MULT primary:y
+            {: RESULT = x * y; :}
+           | mul_expr:x DIV primary:y
+            {: RESULT = x / y; :}
+           | primary:x
+            {: RESULT = x; :}
+           ;
+
+primary ::= ID:x
+            {:
+                Integer val = symbolTable.get(x);
+                if (val == null) {
+                    System.err.println("Undefined variable: " + x);
+                    RESULT = 0;
+                } else {
+                    RESULT = val;
+                }
+            :}
+          | NUM:x
+            {: RESULT = x; :}
+          | STRING
+            {: RESULT = 0; :}
+          ;
+
+rel_expr ::= expr:x GT expr:y
+            {: RESULT = (x > y) ? 1 : 0; :}
+           | expr:x LT expr:y
+            {: RESULT = (x < y) ? 1 : 0; :}
+           | expr:x GE expr:y
+            {: RESULT = (x >= y) ? 1 : 0; :}
+           | expr:x LE expr:y
+            {: RESULT = (x <= y) ? 1 : 0; :}
+           | expr:x EQ expr:y
+            {: RESULT = (x.equals(y)) ? 1 : 0; :}
+           | expr:x NE expr:y
+            {: RESULT = (!x.equals(y)) ? 1 : 0; :}
+           ;
