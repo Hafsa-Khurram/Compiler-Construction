@@ -9,6 +9,15 @@ import java_cup.runtime.*;
 %column
 
 %{
+  /** Lexical errors found so far (invalid characters, unclosed strings, ...). */
+  public final java.util.List<String> errors = new java.util.ArrayList<>();
+
+  private void error(String message) {
+    String msg = "Lexical error at line " + (yyline + 1) + ", column " + (yycolumn + 1) + ": " + message;
+    errors.add(msg);
+    System.err.println(msg);
+  }
+
   /** A token with its position (0-based line and column, shown +1 in messages). */
   private Symbol symbol(int type) {
     return new Symbol(type, yyline, yycolumn, yytext());
@@ -68,11 +77,25 @@ string  = \"([^\"\n]*)\"
 
 // ---------- Literals ----------
 {id}            { System.out.println("Token: ID (" + yytext() + ")"); return symbol(sym.ID, yytext()); }
-{num}           { System.out.println("Token: NUM (" + yytext() + ")"); return symbol(sym.NUM, Integer.valueOf(yytext())); }
+{num}           {
+                  System.out.println("Token: NUM (" + yytext() + ")");
+                  try {
+                    return symbol(sym.NUM, Integer.valueOf(yytext()));
+                  } catch (NumberFormatException e) {
+                    error("number " + yytext() + " is too large (the largest number is 2147483647)");
+                    return symbol(sym.NUM, 0);
+                  }
+                }
 {string}        { 
                   String strVal = yytext().substring(1, yytext().length() - 1); 
                   System.out.println("Token: STRING (" + strVal + ")");
                   return symbol(sym.STRING, strVal); 
+                }
+
+// A string with no closing quote on the same line: report it, keep the text
+\"[^\"\n]*      {
+                  error("this string has no closing quote (\")");
+                  return symbol(sym.STRING, yytext().substring(1));
                 }
 
 // ---------- Comments ----------
@@ -82,4 +105,5 @@ string  = \"([^\"\n]*)\"
 [ \t\r\n]+      { /* skip whitespace */ }
 
 // ---------- Unknown character ----------
-.               { System.err.println("Invalid character: " + yytext()); return null; }
+// Report it and carry on scanning (returning null here used to crash the parser)
+[^]             { error("invalid character '" + yytext() + "'"); }
