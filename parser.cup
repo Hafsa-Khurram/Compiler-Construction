@@ -1,5 +1,38 @@
 import java_cup.runtime.*;
 
+/* ---------- Error reporting ---------- */
+parser code {:
+    /** Syntax errors found while parsing, with line and column. */
+    public final java.util.List<String> errors = new java.util.ArrayList<>();
+
+    /** Readable form of a token from the program, e.g. ']' or name 'age'. */
+    static String describe(Symbol t) {
+        if (t.sym == sym.EOF) return "end of file";
+        if (t.sym == sym.STRING) return "string \"" + t.value + "\"";
+        if (t.sym == sym.NUM) return "number " + t.value;
+        if (t.sym == sym.ID) return "name '" + t.value + "'";
+        return "'" + t.value + "'";
+    }
+
+    @Override
+    public void syntax_error(Symbol t) {
+        String msg = "Syntax error at line " + (t.left + 1) + ", column " + (t.right + 1)
+                + ": unexpected " + describe(t);
+        errors.add(msg);
+        System.err.println(msg);
+    }
+
+    @Override
+    public void report_fatal_error(String message, Object info) {
+        done_parsing(); // the error itself was already reported by syntax_error
+    }
+
+    @Override
+    public void unrecovered_syntax_error(Symbol t) {
+        done_parsing();
+    }
+:};
+
 /* ---------- Terminals ---------- */
 terminal STORE, SET, INPUT, INTO, DISPLAY;
 terminal IF, THEN, OTHERWISE, REPEAT, TIMES, WHILE, FUNCTION;
