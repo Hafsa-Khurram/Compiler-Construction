@@ -17,7 +17,7 @@ class ModernCompilerInterface:
     def __init__(self):
         # Create main window
         self.root = ctk.CTk()
-        self.root.title("JugaarChaiLang Compiler Studio")
+        self.root.title("BeginnerScript Compiler Studio")
         self.root.geometry("1400x900")
         self.root.configure(fg_color="#0f1419")
 
@@ -211,7 +211,8 @@ class ModernCompilerInterface:
 
             # Also make child widgets clickable
             content_frame = ctk.CTkFrame(btn_frame, fg_color="transparent")
-            content_frame.pack(fill="both", expand=True, padx=15, pady=15)
+            # 8px top/bottom padding leaves room for both the name and the extension line
+            content_frame.pack(fill="both", expand=True, padx=15, pady=8)
             content_frame.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
 
             # File icon
