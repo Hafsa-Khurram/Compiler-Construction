@@ -1,0 +1,7 @@
+Compiler Project:
+		BeginnerScript
+
+Group Members:
+HAFSA KHURRAM (FA22-BCS-058)
+ZAINAB ASIF (FA22-BCS-068)
+ATTA NOOR (FA22-BCS-095)

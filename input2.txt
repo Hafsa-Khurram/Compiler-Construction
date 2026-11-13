@@ -1,0 +1,33 @@
+# This is a BeginnerScript sample program with some invalid characters
+
+store username;
+store age;
+
+# Taking input from user
+input "Enter your name: " into username;
+input "Enter your age: " into age;
+
+# Displaying a welcome message
+display ["Hello, " + username];
+
+# Checking eligibility
+if age >= 18 then [
+  display ["You are eligible to vote."]];
+] otherwise [
+  display ["You are not eligible to vote yet."];
+]
+
+# Defining a function (invalid character used: $)
+function welcome$() [
+  display ["Welcome to BeginnerScript!"];
+]
+
+# Calling the function (wrong case: Welcome instead of welcome)
+Welcome();
+
+# Using repeat loop with invalid keyword 'timez'
+repeat 3 timez [
+  display ["Thank you for using BeginnerScript, " + username];
+]
+
+# End of program
