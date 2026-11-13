@@ -95,8 +95,9 @@ string  = \"([^\"\n]*)\"
                   return symbol(sym.STRING, yytext().substring(1, yytext().length() - 1));
                 }
 
-// A string with no closing quote on the same line: report it, keep the text
-\"[^\"\n]*      {
+// A string with no closing quote: report it. The text stops before a ] or ; so that
+// a common mistake like  display ["Hello];  does not also hide the rest of the line.
+\"[^\"\n\];]*   {
                   error("this string has no closing quote (\")");
                   return symbol(sym.STRING, yytext().substring(1));
                 }
