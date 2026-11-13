@@ -585,6 +585,8 @@ class CompilerStudio:
             view.tag_bind(link, "<Enter>", lambda e: view.configure(cursor="hand2"))
             view.tag_bind(link, "<Leave>", lambda e: view.configure(cursor=""))
         self.mark_errors(problems)
+        for name in ("Tokens", "Syntax tree", "Problems"):
+            self.views[name].see("1.0")  # these are read from the top
 
         output = "".join(sections["output"] + sections["other"])
         if output:
