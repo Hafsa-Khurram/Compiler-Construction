@@ -17,7 +17,7 @@ import subprocess
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
@@ -33,6 +33,9 @@ CUP_JAR = os.path.join(LIB, "java-cup-11b.jar")
 CUP_RUNTIME = os.path.join(LIB, "java-cup-11b-runtime.jar")
 COMPILER_SOURCES = ["scanner.jflex", "parser.cup", "Main.java", "Ast.java", "Semantic.java", "Interpreter.java"]
 START_PROGRAM = os.path.join(PROJECT, "examples", "input.txt")
+# Program input filled in when an example is opened
+SAMPLE_INPUT = {"input.txt": "Hafsa\n21", "input2.txt": "Hafsa\n21", "functions.txt": "Zainab",
+                "grades.txt": "72", "loops.txt": ""}
 
 RUN_TIMEOUT_SECONDS = 20
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # no console pop-up on Windows
@@ -55,28 +58,31 @@ SYNTAX = [
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-COLORS = {
-    "bg": "#0f1419",
-    "panel": "#1a2332",
-    "card": "#243447",
-    "editor": "#111a24",
-    "text": "#e6edf3",
-    "muted": "#8b9bb0",
-    "accent": "#9c27b0",
-    "green": "#2e9e5b",
-    "green_hover": "#24804a",
-    "blue": "#2f81f7",
-    "red": "#f47067",
-    "yellow": "#e3b341",
-    "ok": "#56d364",
-    "keyword": "#ff7ab2",
-    "function": "#79c0ff",
-    "number": "#ffa657",
-    "string": "#a5d6a7",
-    "comment": "#6e7f94",
-    "line_numbers": "#4d5d70",
-    "error_line": "#3b1d22",
+PALETTES = {
+    "Dark": {
+        "bg": "#0f1419", "panel": "#1a2332", "card": "#243447", "editor": "#111a24",
+        "text": "#e6edf3", "muted": "#8b9bb0", "selection": "#264f78",
+        "accent": "#9c27b0", "green": "#2e9e5b", "green_hover": "#24804a", "blue": "#2f81f7",
+        "red": "#f47067", "yellow": "#e3b341", "ok": "#56d364",
+        "keyword": "#ff7ab2", "function": "#79c0ff", "number": "#ffa657", "string": "#a5d6a7",
+        "comment": "#6e7f94", "line_numbers": "#4d5d70", "error_line": "#3b1d22",
+    },
+    "Light": {
+        "bg": "#eef1f5", "panel": "#ffffff", "card": "#e3e8ef", "editor": "#fafbfd",
+        "text": "#1f2328", "muted": "#5b6878", "selection": "#b6d7ff",
+        "accent": "#9c27b0", "green": "#2e9e5b", "green_hover": "#24804a", "blue": "#2f81f7",
+        "red": "#cf222e", "yellow": "#9a6700", "ok": "#1a7f37",
+        "keyword": "#a626a4", "function": "#0550ae", "number": "#b35900", "string": "#116329",
+        "comment": "#6e7781", "line_numbers": "#a0aab6", "error_line": "#ffe1e1",
+    },
 }
+# Colours of the current theme (tk widgets read these; ctk widgets get both() pairs)
+COLORS = dict(PALETTES["Dark"])
+
+
+def both(name):
+    """(light, dark) colour pair: CustomTkinter switches between them with the theme."""
+    return PALETTES["Light"][name], PALETTES["Dark"][name]
 
 
 def pick_font(candidates, size):
@@ -93,14 +99,21 @@ class CompilerStudio:
         self.root.title("BeginnerScript Compiler Studio")
         self.root.geometry("1360x860")
         self.root.minsize(1000, 640)
-        self.root.configure(fg_color=COLORS["bg"])
+        self.root.configure(fg_color=both("bg"))
 
         self.mono = pick_font(["Cascadia Code", "Consolas", "JetBrains Mono", "DejaVu Sans Mono", "Menlo"], 12)
         self.events = queue.Queue()
         self.busy = False
+        self._texts = []          # tk.Text widgets, recoloured when the theme changes
+        self.current_file = None  # path of the open program, None for a new one
+        self.saved_text = ""      # file contents when last opened or saved (to detect changes)
 
         self._build_layout()
         self._load_start_program()
+        self.root.bind("<F5>", lambda e: self.start("run"))
+        self.root.bind("<Control-s>", self.save_file)
+        self.root.bind("<Control-o>", self.open_file)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(50, self._poll_events)
         if shutil.which("java") is None:
             self.set_status("Java was not found. Install a JDK (version 11 or newer) and restart.", "red")
@@ -120,40 +133,60 @@ class CompilerStudio:
         self._build_editor_panel(body)
         self._build_results_panel(body)
 
-        self.status = ctk.CTkLabel(self.root, text="Ready", anchor="w", text_color=COLORS["muted"],
+        self.status = ctk.CTkLabel(self.root, text="Ready", anchor="w", text_color=both("muted"),
                                    font=ctk.CTkFont(size=12))
         self.status.grid(row=2, column=0, sticky="ew", padx=20, pady=6)
 
     def _build_header(self):
-        header = ctk.CTkFrame(self.root, height=64, corner_radius=0, fg_color=COLORS["panel"])
+        header = ctk.CTkFrame(self.root, height=64, corner_radius=0, fg_color=both("panel"))
         header.grid(row=0, column=0, sticky="ew")
         header.grid_propagate(False)
 
-        logo = ctk.CTkLabel(header, text="</>", width=40, height=40, corner_radius=10, fg_color=COLORS["accent"],
+        logo = ctk.CTkLabel(header, text="</>", width=40, height=40, corner_radius=10, fg_color=both("accent"),
                             text_color="white", font=ctk.CTkFont(size=16, weight="bold"))
         logo.place(x=20, y=12)
-        ctk.CTkLabel(header, text="BeginnerScript Compiler Studio", text_color=COLORS["text"],
+        ctk.CTkLabel(header, text="BeginnerScript Compiler Studio", text_color=both("text"),
                      font=ctk.CTkFont(size=19, weight="bold")).place(x=74, y=8)
         ctk.CTkLabel(header, text="JFlex scanner  >  CUP parser  >  semantic analysis  >  interpreter",
-                     text_color=COLORS["muted"], font=ctk.CTkFont(size=12)).place(x=75, y=35)
+                     text_color=both("muted"), font=ctk.CTkFont(size=12)).place(x=75, y=35)
+
+        tools = ctk.CTkFrame(header, fg_color="transparent")
+        tools.place(relx=1.0, x=-20, y=14, anchor="ne")
+        button = dict(height=34, corner_radius=8, fg_color=both("card"), hover_color=both("blue"),
+                      text_color=both("text"), font=ctk.CTkFont(size=13))
+        self.example_menu = ctk.CTkOptionMenu(tools, values=self._example_names(), width=150, height=34,
+                                              corner_radius=8, fg_color=both("card"), button_color=both("card"),
+                                              button_hover_color=both("blue"), text_color=both("text"),
+                                              font=ctk.CTkFont(size=13), command=self.open_example)
+        self.example_menu.set("Examples")
+        self.example_menu.pack(side="left", padx=4)
+        ctk.CTkButton(tools, text="Open", width=70, command=self.open_file, **button).pack(side="left", padx=4)
+        ctk.CTkButton(tools, text="Save", width=70, command=self.save_file, **button).pack(side="left", padx=4)
+        ctk.CTkButton(tools, text="Save as", width=80, command=self.save_file_as, **button).pack(side="left", padx=4)
+        self.theme_switch = ctk.CTkSegmentedButton(tools, values=["Dark", "Light"], height=34,
+                                                   selected_color=both("accent"),
+                                                   selected_hover_color=both("accent"),
+                                                   font=ctk.CTkFont(size=13), command=self.apply_theme)
+        self.theme_switch.set("Dark")
+        self.theme_switch.pack(side="left", padx=(12, 0))
 
     def _build_editor_panel(self, body):
-        panel = ctk.CTkFrame(body, fg_color=COLORS["panel"], corner_radius=12)
+        panel = ctk.CTkFrame(body, fg_color=both("panel"), corner_radius=12)
         panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         panel.grid_columnconfigure(0, weight=1)
         panel.grid_rowconfigure(1, weight=1)
 
         bar = ctk.CTkFrame(panel, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
-        self.file_label = ctk.CTkLabel(bar, text="program", text_color=COLORS["text"],
+        self.file_label = ctk.CTkLabel(bar, text="program", text_color=both("text"),
                                        font=ctk.CTkFont(size=14, weight="bold"))
         self.file_label.pack(side="left")
         self.run_button = ctk.CTkButton(bar, text="▶  Run", width=96, height=34, corner_radius=8,
-                                        fg_color=COLORS["green"], hover_color=COLORS["green_hover"],
+                                        fg_color=both("green"), hover_color=both("green_hover"),
                                         font=ctk.CTkFont(size=13, weight="bold"), command=lambda: self.start("run"))
         self.run_button.pack(side="right")
         self.check_button = ctk.CTkButton(bar, text="Check", width=80, height=34, corner_radius=8,
-                                          fg_color=COLORS["card"], hover_color=COLORS["blue"],
+                                          fg_color=both("card"), hover_color=both("blue"), text_color=both("text"),
                                           font=ctk.CTkFont(size=13), command=lambda: self.start("check"))
         self.check_button.pack(side="right", padx=8)
 
@@ -167,15 +200,15 @@ class CompilerStudio:
         self.editor.bind("<<Modified>>", self._on_edit)
 
         ctk.CTkLabel(panel, text="Program input  (one value per line, used by input statements)",
-                     text_color=COLORS["muted"], font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w",
+                     text_color=both("muted"), font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w",
                                                                                 padx=16, pady=(10, 4))
         self.stdin_box = self._text_widget(panel, editable=True, height=3)
         self.stdin_box.master.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 14))
 
     def _build_results_panel(self, body):
-        self.tabs = ctk.CTkTabview(body, fg_color=COLORS["panel"], corner_radius=12,
-                                   segmented_button_selected_color=COLORS["accent"],
-                                   segmented_button_selected_hover_color=COLORS["accent"])
+        self.tabs = ctk.CTkTabview(body, fg_color=both("panel"), corner_radius=12,
+                                   segmented_button_selected_color=both("accent"),
+                                   segmented_button_selected_hover_color=both("accent"))
         self.tabs.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         self.views = {}
         for name in ("Output", "Problems", "Tokens", "Syntax tree", "Build log"):
@@ -190,13 +223,14 @@ class CompilerStudio:
 
     def _text_widget(self, parent, editable, height=None, wrap=False):
         """A dark, monospace tk.Text with scrollbars, inside its own frame."""
-        frame = ctk.CTkFrame(parent, fg_color=COLORS["editor"], corner_radius=8, height=20)  # size comes from the text
+        frame = ctk.CTkFrame(parent, fg_color=both("editor"), corner_radius=8, height=20)  # size comes from the text
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=1)
         text = tk.Text(frame, wrap="word" if wrap else "none", undo=editable, font=self.mono, relief="flat",
                        borderwidth=0, highlightthickness=0, padx=10, pady=8, background=COLORS["editor"],
                        foreground=COLORS["text"], insertbackground=COLORS["text"],
-                       selectbackground="#264f78", height=height or 10)
+                       selectbackground=COLORS["selection"], height=height or 10)
+        self._texts.append(text)
         text.grid(row=0, column=0, sticky="nsew")
         # Small requested sizes: the scrollbars stretch to fit, instead of forcing 200px
         scroll = ctk.CTkScrollbar(frame, command=text.yview, height=20)
@@ -253,6 +287,7 @@ class CompilerStudio:
             self.root.after_cancel(self._highlight_job)
         self._highlight_job = self.root.after(120, self._highlight)
         self._draw_line_numbers()
+        self._update_title()
 
     def _highlight(self):
         self._highlight_job = None
@@ -283,12 +318,113 @@ class CompilerStudio:
 
     def _load_start_program(self):
         if os.path.isfile(START_PROGRAM):
-            with open(START_PROGRAM, encoding="utf-8") as f:
-                self.editor.insert("1.0", f.read())
-            self.file_label.configure(text="examples/input.txt")
-        self.stdin_box.insert("1.0", "Hafsa\n21")
+            self.load(START_PROGRAM)
+
+    # ------------------------------------------------------------ files
+
+    def _example_names(self):
+        folder = os.path.join(PROJECT, "examples")
+        return sorted(f for f in os.listdir(folder) if f.endswith(".txt")) if os.path.isdir(folder) else []
+
+    def _is_dirty(self):
+        return self.editor.get("1.0", "end-1c") != self.saved_text
+
+    def _update_title(self):
+        if self.current_file:
+            name = os.path.relpath(self.current_file, PROJECT)
+            if name.startswith(".."):
+                name = os.path.basename(self.current_file)
+        else:
+            name = "untitled"
+        dirty = self._is_dirty()
+        self.file_label.configure(text=name.replace(os.sep, "/") + ("  \u2022 unsaved" if dirty else ""))
+        self.root.title(("* " if dirty else "") + name + " - BeginnerScript Compiler Studio")
+
+    def _confirm_discard(self):
+        """True if it is fine to replace the editor contents."""
+        if not self._is_dirty():
+            return True
+        answer = messagebox.askyesnocancel("Unsaved changes", "Save your changes to the current program first?")
+        if answer is None:
+            return False
+        return self.save_file() if answer else True
+
+    def load(self, path):
+        with open(path, encoding="utf-8") as f:
+            code = f.read()
+        self.editor.delete("1.0", "end")
+        self.editor.insert("1.0", code)
         self.editor.edit_reset()
+        self.editor.mark_set("insert", "1.0")
+        self.editor.see("1.0")
+        self.current_file = path
+        self.saved_text = self.editor.get("1.0", "end-1c")
+        sample = SAMPLE_INPUT.get(os.path.basename(path))
+        if sample is not None:
+            self.stdin_box.delete("1.0", "end")
+            self.stdin_box.insert("1.0", sample)
         self._highlight()
+        self._update_title()
+        self.set_status("Opened " + os.path.basename(path))
+
+    def open_example(self, name):
+        self.example_menu.set("Examples")
+        if self._confirm_discard():
+            self.load(os.path.join(PROJECT, "examples", name))
+
+    def open_file(self, _event=None):
+        if not self._confirm_discard():
+            return
+        path = filedialog.askopenfilename(title="Open a BeginnerScript program", initialdir=os.path.join(PROJECT, "examples"),
+                                          filetypes=[("BeginnerScript programs", "*.txt *.bs"), ("All files", "*.*")])
+        if path:
+            self.load(path)
+
+    def save_file(self, _event=None):
+        if not self.current_file:
+            return self.save_file_as()
+        return self._save_to(self.current_file)
+
+    def save_file_as(self, _event=None):
+        path = filedialog.asksaveasfilename(title="Save program as", defaultextension=".txt",
+                                            initialdir=os.path.join(PROJECT, "examples"),
+                                            filetypes=[("BeginnerScript programs", "*.txt *.bs"), ("All files", "*.*")])
+        return self._save_to(path) if path else False
+
+    def _save_to(self, path):
+        code = self.editor.get("1.0", "end-1c")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(code)
+        except OSError as e:
+            messagebox.showerror("Could not save", str(e))
+            return False
+        self.current_file = path
+        self.saved_text = code
+        self._update_title()
+        self.set_status("Saved " + os.path.basename(path), "ok")
+        return True
+
+    def on_close(self):
+        if self._confirm_discard():
+            self.root.destroy()
+
+    # ------------------------------------------------------------ theme
+
+    def apply_theme(self, mode):
+        """Switch between the Dark and Light colour themes."""
+        COLORS.update(PALETTES[mode])
+        ctk.set_appearance_mode(mode.lower())
+        for text in self._texts:
+            text.configure(background=COLORS["editor"], foreground=COLORS["text"],
+                           insertbackground=COLORS["text"], selectbackground=COLORS["selection"])
+            for tag, color in (("muted", "muted"), ("error", "red"), ("ok", "ok"), ("warn", "yellow")):
+                text.tag_configure(tag, foreground=COLORS[color])
+        for tag in ("keyword", "function", "number", "comment", "string"):
+            self.editor.tag_configure(tag, foreground=COLORS[tag])
+        self.editor.tag_configure("error_line", background=COLORS["error_line"])
+        self.gutter.configure(background=COLORS["editor"])
+        self._draw_line_numbers()
 
     def _write(self, view, text, tag=None):
         widget = self.views[view]
@@ -305,7 +441,7 @@ class CompilerStudio:
             widget.configure(state="disabled")
 
     def set_status(self, text, color="muted"):
-        self.status.configure(text=text, text_color=COLORS.get(color, color))
+        self.status.configure(text=text, text_color=both(color) if color in COLORS else color)
 
     # ------------------------------------------------------------ compile and run
 
