@@ -5,22 +5,30 @@ import java_cup.runtime.DefaultSymbolFactory;
 /**
  * BeginnerScript compiler driver.
  *
- * Usage: java Main [--tokens] [--tree] program.txt
+ * Phases: lexical analysis (MyScanner, from scanner.jflex), syntax analysis
+ * (parser, from parser.cup, builds an Ast), semantic analysis (Semantic) and
+ * execution (Interpreter). The program only runs if no errors were found.
  *
- *   --tokens print every token found by the scanner (lexical analysis)
+ * Usage: java Main [--tokens] [--tree] [--check] program.txt
+ *
+ *   --tokens print every token found by the scanner
  *   --tree   print the abstract syntax tree built by the parser
+ *   --check  stop after semantic analysis (do not run the program)
  *
- * Exit codes: 0 = no errors, 1 = errors in the program, 2 = bad command line or file.
+ * Exit codes: 0 = ok, 1 = errors in the program, 2 = bad command line or file,
+ * 3 = runtime error while the program was running.
  */
 public class Main {
   @SuppressWarnings("deprecation") // CUP marks its DefaultSymbolFactory deprecated, but it is the right one for plain Symbols
   public static void main(String[] args) {
     boolean showTokens = false;
     boolean showTree = false;
+    boolean checkOnly = false;
     String path = null;
     for (String arg : args) {
       if (arg.equals("--tokens")) showTokens = true;
       else if (arg.equals("--tree")) showTree = true;
+      else if (arg.equals("--check")) checkOnly = true;
       else if (arg.startsWith("--") || path != null) usage("Unknown option: " + arg);
       else path = arg;
     }
@@ -63,7 +71,23 @@ public class Main {
         System.out.println("=== Syntax tree ===");
         System.out.print(Ast.toTree(program));
       }
-      System.out.println("No errors found in " + file.getName());
+      if (checkOnly) {
+        System.out.println("No errors found in " + file.getName());
+        return;
+      }
+
+      // Execution
+      if (showTokens || showTree) System.out.println("=== Program output ===");
+      System.out.flush();
+      BufferedReader stdin = new BufferedReader(new InputStreamReader(System.in));
+      boolean typedByPerson = System.console() != null;
+      try {
+        new Interpreter(stdin, System.out, !typedByPerson).run(program);
+      } catch (Interpreter.RuntimeError e) {
+        System.out.flush();
+        System.err.println(e.getMessage());
+        System.exit(3);
+      }
     } catch (IOException e) {
       System.err.println("Could not read " + file.getName() + ": " + e.getMessage());
       System.exit(2);
@@ -75,8 +99,8 @@ public class Main {
 
   private static void usage(String problem) {
     if (problem != null) System.err.println(problem);
-    System.err.println("Usage: java Main [--tokens] [--tree] <program-file>");
-    System.err.println("Example: java Main --tokens --tree input.txt");
+    System.err.println("Usage: java Main [--tokens] [--tree] [--check] <program-file>");
+    System.err.println("Example: java Main input.txt");
     System.exit(2);
   }
 }
