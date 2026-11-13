@@ -18,6 +18,11 @@ parser code {:
     public void syntax_error(Symbol t) {
         String msg = "Syntax error at line " + (t.left + 1) + ", column " + (t.right + 1)
                 + ": unexpected " + describe(t);
+        // A statement keyword in the wrong place usually means the previous statement has no ';'
+        if (t.sym == sym.STORE || t.sym == sym.SET || t.sym == sym.INPUT || t.sym == sym.DISPLAY
+                || t.sym == sym.IF || t.sym == sym.WHILE || t.sym == sym.REPEAT || t.sym == sym.FUNCTION) {
+            msg += " (is a ';' missing before it?)";
+        }
         errors.add(msg);
         System.err.println(msg);
     }
@@ -54,8 +59,9 @@ start with program;
 
 program ::= stmt_list;
 
+/* A program or block may be empty (e.g. only comments, or [ ]) */
 stmt_list ::= stmt_list stmt
-            | stmt
+            | /* empty */
             ;
 
 stmt ::= STORE ID SEMI
@@ -67,6 +73,8 @@ stmt ::= STORE ID SEMI
        | REPEAT NUM TIMES block
        | FUNCTION ID LPAREN RPAREN block
        | func_call SEMI
+       /* Error recovery: skip to the next ';' and keep parsing, so every error is reported */
+       | error SEMI
        ;
 
 block ::= LBRACK stmt_list RBRACK;
