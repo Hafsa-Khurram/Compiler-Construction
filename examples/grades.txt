@@ -1,0 +1,18 @@
+# Grade calculator: nested if / otherwise
+
+store marks;
+input "Enter your marks (0-100): " into marks;
+
+if marks >= 85 then [
+  display ["Grade A - excellent!"];
+] otherwise [
+  if marks >= 70 then [
+    display ["Grade B - very good"];
+  ] otherwise [
+    if marks >= 50 then [
+      display ["Grade C - you passed"];
+    ] otherwise [
+      display ["Grade F - keep practising"];
+    ]
+  ]
+]

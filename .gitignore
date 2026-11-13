@@ -15,3 +15,6 @@ user_input.txt
 .DS_Store
 Thumbs.db
 __pycache__/
+
+# Build output (build.bat / build.sh)
+build/

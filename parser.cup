@@ -1,4 +1,50 @@
 import java_cup.runtime.*;
+import java.util.ArrayList;
+import java.util.List;
+
+/* ---------- Error reporting ---------- */
+parser code {:
+    /** Syntax errors found while parsing, with line and column. */
+    public final java.util.List<String> errors = new java.util.ArrayList<>();
+
+    /** Readable form of a token from the program, e.g. ']' or name 'age'. */
+    static String describe(Symbol t) {
+        if (t.sym == sym.EOF) return "end of file";
+        if (t.sym == sym.STRING) return "string \"" + t.value + "\"";
+        if (t.sym == sym.NUM) return "number " + t.value;
+        if (t.sym == sym.ID) return "name '" + t.value + "'";
+        return "'" + t.value + "'";
+    }
+
+    @Override
+    public void syntax_error(Symbol t) {
+        String msg = "Syntax error at line " + (t.left + 1) + ", column " + (t.right + 1)
+                + ": unexpected " + describe(t);
+        // A statement keyword in the wrong place usually means the previous statement has no ';'
+        if (t.sym == sym.STORE || t.sym == sym.SET || t.sym == sym.INPUT || t.sym == sym.DISPLAY
+                || t.sym == sym.IF || t.sym == sym.WHILE || t.sym == sym.REPEAT || t.sym == sym.FUNCTION) {
+            msg += " (is a ';' missing before it?)";
+        }
+        errors.add(msg);
+        System.err.println(msg);
+    }
+
+    @Override
+    public void report_fatal_error(String message, Object info) {
+        done_parsing(); // the error itself was already reported by syntax_error
+    }
+
+    @Override
+    public void unrecovered_syntax_error(Symbol t) {
+        done_parsing();
+    }
+:};
+
+/*
+ * BeginnerScript grammar. The actions build an abstract syntax tree (Ast.java);
+ * nothing is executed while parsing. Positions: xleft = line, xright = column
+ * (both 0-based, so +1 for the tree).
+ */
 
 /* ---------- Terminals ---------- */
 terminal STORE, SET, INPUT, INTO, DISPLAY;
@@ -11,58 +57,127 @@ terminal Integer NUM;
 terminal String STRING;
 
 /* ---------- Non-Terminals ---------- */
-non terminal program, stmt_list, stmt, block, func_call;
-non terminal Integer expr, add_expr, mul_expr, rel_expr, primary;
+non terminal Ast.Program program;
+non terminal List<Ast.Stmt> stmt_list, block;
+non terminal Ast.Stmt stmt;
+non terminal Ast.Call func_call;
+non terminal Ast.Expr expr, add_expr, mul_expr, rel_expr, primary;
+non terminal List<String> param_list, params;
+non terminal List<Ast.Expr> arg_list, args;
 
 /* ---------- Start Symbol ---------- */
 start with program;
 
 /* ---------- Grammar Rules ---------- */
 
-program ::= stmt_list;
+program ::= stmt_list:l
+            {: RESULT = new Ast.Program(l); :}
+          ;
 
-stmt_list ::= stmt_list stmt
-            | stmt
+/* A program or block may be empty (e.g. only comments, or [ ]) */
+stmt_list ::= stmt_list:l stmt:s
+              {: if (s != null) l.add(s); RESULT = l; :}
+            | /* empty */
+              {: RESULT = new ArrayList<Ast.Stmt>(); :}
             ;
 
-stmt ::= STORE ID SEMI
-       | SET ID ASSIGN expr SEMI
-       | INPUT STRING INTO ID SEMI
-       | DISPLAY LBRACK expr RBRACK SEMI
-       | IF rel_expr THEN block OTHERWISE block
-       | WHILE rel_expr block
-       | REPEAT NUM TIMES block
-       | FUNCTION ID LPAREN RPAREN block
-       | func_call SEMI
+stmt ::= STORE:k ID:n SEMI
+         {: RESULT = new Ast.Store(kleft + 1, kright + 1, n); :}
+       | SET:k ID:n ASSIGN expr:e SEMI
+         {: RESULT = new Ast.Set(kleft + 1, kright + 1, n, e); :}
+       | INPUT:k STRING:p INTO ID:n SEMI
+         {: RESULT = new Ast.Input(kleft + 1, kright + 1, p, n); :}
+       | DISPLAY:k LBRACK expr:e RBRACK SEMI
+         {: RESULT = new Ast.Display(kleft + 1, kright + 1, e); :}
+       | IF:k rel_expr:c THEN block:a OTHERWISE block:b
+         {: RESULT = new Ast.If(kleft + 1, kright + 1, c, a, b); :}
+       | WHILE:k rel_expr:c block:b
+         {: RESULT = new Ast.While(kleft + 1, kright + 1, c, b); :}
+       | REPEAT:k NUM:n TIMES block:b
+         {: RESULT = new Ast.Repeat(kleft + 1, kright + 1, n, b); :}
+       | FUNCTION:k ID:n LPAREN param_list:p RPAREN block:b
+         {: RESULT = new Ast.Function(kleft + 1, kright + 1, n, p, b); :}
+       | func_call:c SEMI
+         {: RESULT = c; :}
+       /* Error recovery: skip to the next ';' and keep parsing, so every error is reported */
+       | error SEMI
+         {: RESULT = null; :}
        ;
 
-block ::= LBRACK stmt_list RBRACK;
+block ::= LBRACK stmt_list:l RBRACK
+          {: RESULT = l; :}
+        ;
 
-func_call ::= ID LPAREN RPAREN;
+func_call ::= ID:n LPAREN arg_list:a RPAREN
+              {: RESULT = new Ast.Call(nleft + 1, nright + 1, n, a); :}
+            ;
+
+/* Function parameters: function greet(name, age) [ ... ] */
+param_list ::= params:p
+               {: RESULT = p; :}
+             | /* no parameters */
+               {: RESULT = new ArrayList<String>(); :}
+             ;
+
+params ::= params:p COMMA ID:n
+           {: p.add(n); RESULT = p; :}
+         | ID:n
+           {: List<String> p = new ArrayList<>(); p.add(n); RESULT = p; :}
+         ;
+
+/* Call arguments: greet("Hafsa", 21); */
+arg_list ::= args:a
+             {: RESULT = a; :}
+           | /* no arguments */
+             {: RESULT = new ArrayList<Ast.Expr>(); :}
+           ;
+
+args ::= args:a COMMA expr:e
+         {: a.add(e); RESULT = a; :}
+       | expr:e
+         {: List<Ast.Expr> a = new ArrayList<>(); a.add(e); RESULT = a; :}
+       ;
 
 /* ---------- Expressions ---------- */
 
-expr ::= add_expr;
+expr ::= add_expr:e
+         {: RESULT = e; :}
+       ;
 
-add_expr ::= add_expr PLUS mul_expr
-           | add_expr MINUS mul_expr
-           | mul_expr
+add_expr ::= add_expr:a PLUS:o mul_expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "+", a, b); :}
+           | add_expr:a MINUS:o mul_expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "-", a, b); :}
+           | mul_expr:e
+             {: RESULT = e; :}
            ;
 
-mul_expr ::= mul_expr MULT primary
-           | mul_expr DIV primary
-           | primary
+mul_expr ::= mul_expr:a MULT:o primary:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "*", a, b); :}
+           | mul_expr:a DIV:o primary:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "/", a, b); :}
+           | primary:e
+             {: RESULT = e; :}
            ;
 
-primary ::= ID
-          | NUM
-          | STRING
+primary ::= ID:n
+            {: RESULT = new Ast.Var(nleft + 1, nright + 1, n); :}
+          | NUM:n
+            {: RESULT = new Ast.Num(nleft + 1, nright + 1, n); :}
+          | STRING:s
+            {: RESULT = new Ast.Str(sleft + 1, sright + 1, s); :}
           ;
 
-rel_expr ::= expr GT expr
-           | expr LT expr
-           | expr GE expr
-           | expr LE expr
-           | expr EQ expr
-           | expr NE expr
+rel_expr ::= expr:a GT:o expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, ">", a, b); :}
+           | expr:a LT:o expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "<", a, b); :}
+           | expr:a GE:o expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, ">=", a, b); :}
+           | expr:a LE:o expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "<=", a, b); :}
+           | expr:a EQ:o expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "==", a, b); :}
+           | expr:a NE:o expr:b
+             {: RESULT = new Ast.Binary(oleft + 1, oright + 1, "!=", a, b); :}
            ;

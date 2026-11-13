@@ -8,6 +8,36 @@ import java_cup.runtime.*;
 %line
 %column
 
+%{
+  /** Lexical errors found so far (invalid characters, unclosed strings, ...). */
+  public final java.util.List<String> errors = new java.util.ArrayList<>();
+
+  private void error(String message) {
+    String msg = "Lexical error at line " + (yyline + 1) + ", column " + (yycolumn + 1) + ": " + message;
+    errors.add(msg);
+    System.err.println(msg);
+  }
+
+  /** When true, every token is printed as it is recognised (Main --tokens). */
+  public static boolean showTokens = false;
+
+  /** A token with its position (0-based line and column, shown +1 in messages). */
+  private Symbol symbol(int type) {
+    return symbol(type, yytext());
+  }
+
+  private Symbol symbol(int type, Object value) {
+    if (showTokens) {
+      System.out.printf("%4d:%-4d %-10s %s%n", yyline + 1, yycolumn + 1, sym.terminalNames[type], yytext());
+    }
+    return new Symbol(type, yyline, yycolumn, value);
+  }
+%}
+
+%eofval{
+  return new Symbol(sym.EOF, yyline, yycolumn);
+%eofval}
+
 // Regex definitions
 num     = [0-9]+
 id      = [_a-zA-Z][_a-zA-Z0-9]*
@@ -16,55 +46,68 @@ string  = \"([^\"\n]*)\"
 %%
 
 // ---------- Keywords ----------
-"store"         { System.out.println("Token: STORE"); return new Symbol(sym.STORE); }
-"set"           { System.out.println("Token: SET"); return new Symbol(sym.SET); }
-"input"         { System.out.println("Token: INPUT"); return new Symbol(sym.INPUT); }
-"into"          { System.out.println("Token: INTO"); return new Symbol(sym.INTO); }
-"display"       { System.out.println("Token: DISPLAY"); return new Symbol(sym.DISPLAY); }
-"if"            { System.out.println("Token: IF"); return new Symbol(sym.IF); }
-"then"          { System.out.println("Token: THEN"); return new Symbol(sym.THEN); }
-"otherwise"     { System.out.println("Token: OTHERWISE"); return new Symbol(sym.OTHERWISE); }
-"repeat"        { System.out.println("Token: REPEAT"); return new Symbol(sym.REPEAT); }
-"times"         { System.out.println("Token: TIMES"); return new Symbol(sym.TIMES); }
-"while"         { System.out.println("Token: WHILE"); return new Symbol(sym.WHILE); }
-"function"      { System.out.println("Token: FUNCTION"); return new Symbol(sym.FUNCTION); }
+"store"         { return symbol(sym.STORE); }
+"set"           { return symbol(sym.SET); }
+"input"         { return symbol(sym.INPUT); }
+"into"          { return symbol(sym.INTO); }
+"display"       { return symbol(sym.DISPLAY); }
+"if"            { return symbol(sym.IF); }
+"then"          { return symbol(sym.THEN); }
+"otherwise"     { return symbol(sym.OTHERWISE); }
+"repeat"        { return symbol(sym.REPEAT); }
+"times"         { return symbol(sym.TIMES); }
+"while"         { return symbol(sym.WHILE); }
+"function"      { return symbol(sym.FUNCTION); }
 
 // ---------- Operators ----------
-">="            { System.out.println("Token: GE (>=)"); return new Symbol(sym.GE); }
-"<="            { System.out.println("Token: LE (<=)"); return new Symbol(sym.LE); }
-"=="            { System.out.println("Token: EQ (==)"); return new Symbol(sym.EQ); }
-"!="            { System.out.println("Token: NE (!=)"); return new Symbol(sym.NE); }
-">"             { System.out.println("Token: GT (>)"); return new Symbol(sym.GT); }
-"<"             { System.out.println("Token: LT (<)"); return new Symbol(sym.LT); }
+">="            { return symbol(sym.GE); }
+"<="            { return symbol(sym.LE); }
+"=="            { return symbol(sym.EQ); }
+"!="            { return symbol(sym.NE); }
+">"             { return symbol(sym.GT); }
+"<"             { return symbol(sym.LT); }
 
-"="             { System.out.println("Token: ASSIGN (=)"); return new Symbol(sym.ASSIGN); }
-"+"             { System.out.println("Token: PLUS (+)"); return new Symbol(sym.PLUS); }
-"-"             { System.out.println("Token: MINUS (-)"); return new Symbol(sym.MINUS); }
-"*"             { System.out.println("Token: MULT (*)"); return new Symbol(sym.MULT); }
-"/"             { System.out.println("Token: DIV (/)"); return new Symbol(sym.DIV); }
+"="             { return symbol(sym.ASSIGN); }
+"+"             { return symbol(sym.PLUS); }
+"-"             { return symbol(sym.MINUS); }
+"*"             { return symbol(sym.MULT); }
+"/"             { return symbol(sym.DIV); }
 
 // ---------- Symbols ----------
-"("             { System.out.println("Token: LPAREN"); return new Symbol(sym.LPAREN); }
-")"             { System.out.println("Token: RPAREN"); return new Symbol(sym.RPAREN); }
-"["             { System.out.println("Token: LBRACK"); return new Symbol(sym.LBRACK); }
-"]"             { System.out.println("Token: RBRACK"); return new Symbol(sym.RBRACK); }
-";"             { System.out.println("Token: SEMI"); return new Symbol(sym.SEMI); }
-","             { System.out.println("Token: COMMA"); return new Symbol(sym.COMMA); }
+"("             { return symbol(sym.LPAREN); }
+")"             { return symbol(sym.RPAREN); }
+"["             { return symbol(sym.LBRACK); }
+"]"             { return symbol(sym.RBRACK); }
+";"             { return symbol(sym.SEMI); }
+","             { return symbol(sym.COMMA); }
 
 // ---------- Literals ----------
-{id}            { System.out.println("Token: ID (" + yytext() + ")"); return new Symbol(sym.ID, yytext()); }
-{num}           { System.out.println("Token: NUM (" + yytext() + ")"); return new Symbol(sym.NUM, Integer.valueOf(yytext())); }
+{id}            { return symbol(sym.ID, yytext()); }
+{num}           {
+                  try {
+                    return symbol(sym.NUM, Integer.valueOf(yytext()));
+                  } catch (NumberFormatException e) {
+                    error("number " + yytext() + " is too large (the largest number is 2147483647)");
+                    return symbol(sym.NUM, 0);
+                  }
+                }
 {string}        { 
-                  String strVal = yytext().substring(1, yytext().length() - 1); 
-                  System.out.println("Token: STRING (" + strVal + ")");
-                  return new Symbol(sym.STRING, strVal); 
+                  return symbol(sym.STRING, yytext().substring(1, yytext().length() - 1));
+                }
+
+// A string with no closing quote: report it. The text stops before a ] or ; so that
+// a common mistake like  display ["Hello];  does not also hide the rest of the line.
+\"[^\"\n\];]*   {
+                  error("this string has no closing quote (\")");
+                  return symbol(sym.STRING, yytext().substring(1));
                 }
 
 // ---------- Comments ----------
-"#".*           { System.out.println("Skipping comment: " + yytext()); }
+"#".*           { /* skip comments */ }
 
 // ---------- Whitespace ----------
 [ \t\r\n]+      { /* skip whitespace */ }
 
 // ---------- Unknown character ----------
-.               { System.err.println("Invalid character: " + yytext()); return null; }
+// Report it and carry on scanning (returning null here used to crash the parser)
+[^]             { error("invalid character '" + yytext() + "'"); }

@@ -1,0 +1,30 @@
+# Functions with parameters (the example from the project proposal)
+
+store username;
+input "Enter your name: " into username;
+
+# Define a function to display a welcome message
+function welcome(name) [
+  display ["Welcome to BeginnerScript, " + name + "!"];
+]
+
+# A function with two parameters and a local variable
+function add(a, b) [
+  store sum;
+  set sum = a + b;
+  display [a + " + " + b + " = " + sum];
+]
+
+# A function can call itself (recursion)
+function countdown(n) [
+  if n > 0 then [
+    display [n];
+    countdown(n - 1);
+  ] otherwise [
+    display ["Lift off!"];
+  ]
+]
+
+welcome(username);
+add(12, 30);
+countdown(3);
