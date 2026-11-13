@@ -1,689 +1,382 @@
-import customtkinter as ctk
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import threading
-import time
-import subprocess
+"""
+BeginnerScript Compiler Studio
+
+A desktop editor for BeginnerScript programs. It builds the compiler from
+scanner.jflex and parser.cup with the bundled JFlex and CUP (in lib/), runs the
+program, and shows every compiler phase: tokens, syntax tree, problems and the
+program's output.
+
+Run it from the project folder:   python gui.py
+Needs: Python 3.8+, customtkinter (pip install customtkinter) and a JDK 11+.
+"""
 import os
+import queue
+import re
 import shutil
+import subprocess
+import threading
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import messagebox
 
+import customtkinter as ctk
 
-# Set appearance mode and color theme
+# ---------------------------------------------------------------- paths
+
+PROJECT = os.path.dirname(os.path.abspath(__file__))
+LIB = os.path.join(PROJECT, "lib")
+BUILD = os.path.join(PROJECT, "build")
+GEN = os.path.join(BUILD, "gen")
+CLASSES = os.path.join(BUILD, "classes")
+JFLEX_JAR = os.path.join(LIB, "jflex-full-1.9.1.jar")
+CUP_JAR = os.path.join(LIB, "java-cup-11b.jar")
+CUP_RUNTIME = os.path.join(LIB, "java-cup-11b-runtime.jar")
+COMPILER_SOURCES = ["scanner.jflex", "parser.cup", "Main.java", "Ast.java", "Semantic.java", "Interpreter.java"]
+START_PROGRAM = os.path.join(PROJECT, "examples", "input.txt")
+
+RUN_TIMEOUT_SECONDS = 20
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # no console pop-up on Windows
+
+ERROR_LINE = re.compile(r"^(Lexical|Syntax|Semantic|Runtime) error at line (\d+), column (\d+): (.*)$")
+
+# ---------------------------------------------------------------- look
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+COLORS = {
+    "bg": "#0f1419",
+    "panel": "#1a2332",
+    "card": "#243447",
+    "editor": "#111a24",
+    "text": "#e6edf3",
+    "muted": "#8b9bb0",
+    "accent": "#9c27b0",
+    "green": "#2e9e5b",
+    "green_hover": "#24804a",
+    "blue": "#2f81f7",
+    "red": "#f47067",
+    "yellow": "#e3b341",
+    "ok": "#56d364",
+}
 
-class ModernCompilerInterface:
+
+def pick_font(candidates, size):
+    families = set(tkfont.families())
+    for name in candidates:
+        if name in families:
+            return (name, size)
+    return ("Courier", size)
+
+
+class CompilerStudio:
     def __init__(self):
-        # Create main window
         self.root = ctk.CTk()
         self.root.title("BeginnerScript Compiler Studio")
-        self.root.geometry("1400x900")
-        self.root.configure(fg_color="#0f1419")
+        self.root.geometry("1360x860")
+        self.root.minsize(1000, 640)
+        self.root.configure(fg_color=COLORS["bg"])
 
-        # Modern color palette inspired by the reference
-        self.colors = {
-            "bg_primary": "#0f1419",
-            "bg_secondary": "#1a2332",
-            "bg_tertiary": "#243447",
-            "bg_card": "#2a3f5f",
-            "accent_pink": "#ff4081",
-            "accent_cyan": "#00bcd4",
-            "accent_green": "#4caf50",
-            "accent_blue": "#2196f3",
-            "accent_purple": "#9c27b0",
-            "text_primary": "#ffffff",
-            "text_secondary": "#b0bec5",
-            "text_muted": "#78909c"
-        }
+        self.mono = pick_font(["Cascadia Code", "Consolas", "JetBrains Mono", "DejaVu Sans Mono", "Menlo"], 12)
+        self.events = queue.Queue()
+        self.busy = False
 
-        # Current theme
-        self.current_theme = "Neural"
+        self._build_layout()
+        self._load_start_program()
+        self.root.after(50, self._poll_events)
+        if shutil.which("java") is None:
+            self.set_status("Java was not found. Install a JDK (version 11 or newer) and restart.", "red")
 
-        # File status
-        self.file_status = {
-            "Scanner": {"selected": False, "path": ""},
-            "Parser": {"selected": False, "path": ""},
-            "Input": {"selected": False, "path": ""}
-        }
+    # ------------------------------------------------------------ layout
 
-        # Compilation step tracking
-        self.compilation_step = 0
+    def _build_layout(self):
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=1)
+        self._build_header()
 
-        # Initialize UI components
-        self.input_textbox = None  # Will be initialized later
+        body = ctk.CTkFrame(self.root, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew", padx=16, pady=(12, 0))
+        body.grid_columnconfigure(0, weight=3, uniform="cols")
+        body.grid_columnconfigure(1, weight=2, uniform="cols")
+        body.grid_rowconfigure(0, weight=1)
+        self._build_editor_panel(body)
+        self._build_results_panel(body)
 
-        self.setup_ui()
+        self.status = ctk.CTkLabel(self.root, text="Ready", anchor="w", text_color=COLORS["muted"],
+                                   font=ctk.CTkFont(size=12))
+        self.status.grid(row=2, column=0, sticky="ew", padx=20, pady=6)
 
-    def setup_ui(self):
-        # Create header
-        self.create_header()
+    def _build_header(self):
+        header = ctk.CTkFrame(self.root, height=64, corner_radius=0, fg_color=COLORS["panel"])
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_propagate(False)
 
-        # Create main container
-        self.main_container = ctk.CTkFrame(
-            self.root,
-            fg_color=self.colors["bg_primary"],
-            corner_radius=0
-        )
-        self.main_container.pack(fill="both", expand=True, padx=0, pady=0)
+        logo = ctk.CTkLabel(header, text="</>", width=40, height=40, corner_radius=10, fg_color=COLORS["accent"],
+                            text_color="white", font=ctk.CTkFont(size=16, weight="bold"))
+        logo.place(x=20, y=12)
+        ctk.CTkLabel(header, text="BeginnerScript Compiler Studio", text_color=COLORS["text"],
+                     font=ctk.CTkFont(size=19, weight="bold")).place(x=74, y=8)
+        ctk.CTkLabel(header, text="JFlex scanner  >  CUP parser  >  semantic analysis  >  interpreter",
+                     text_color=COLORS["muted"], font=ctk.CTkFont(size=12)).place(x=75, y=35)
 
-        # Create sidebar and main content
-        self.create_sidebar()
-        self.create_console_area()
+    def _build_editor_panel(self, body):
+        panel = ctk.CTkFrame(body, fg_color=COLORS["panel"], corner_radius=12)
+        panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(1, weight=1)
 
-    def create_header(self):
-        # Header frame
-        header_frame = ctk.CTkFrame(
-            self.root,
-            height=70,
-            fg_color=self.colors["bg_secondary"],
-            corner_radius=0
-        )
-        header_frame.pack(fill="x", padx=0, pady=0)
-        header_frame.pack_propagate(False)
+        bar = ctk.CTkFrame(panel, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+        self.file_label = ctk.CTkLabel(bar, text="program", text_color=COLORS["text"],
+                                       font=ctk.CTkFont(size=14, weight="bold"))
+        self.file_label.pack(side="left")
+        self.run_button = ctk.CTkButton(bar, text="▶  Run", width=96, height=34, corner_radius=8,
+                                        fg_color=COLORS["green"], hover_color=COLORS["green_hover"],
+                                        font=ctk.CTkFont(size=13, weight="bold"), command=lambda: self.start("run"))
+        self.run_button.pack(side="right")
+        self.check_button = ctk.CTkButton(bar, text="Check", width=80, height=34, corner_radius=8,
+                                          fg_color=COLORS["card"], hover_color=COLORS["blue"],
+                                          font=ctk.CTkFont(size=13), command=lambda: self.start("check"))
+        self.check_button.pack(side="right", padx=8)
 
-        # Left side - Logo and title
-        left_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        left_frame.pack(side="left", padx=20, pady=15)
+        self.editor = self._text_widget(panel, editable=True)
+        self.editor.master.grid(row=1, column=0, sticky="nsew", padx=14)
 
-        # Logo
-        logo_frame = ctk.CTkFrame(
-            left_frame,
-            width=40,
-            height=40,
-            fg_color=self.colors["accent_purple"],
-            corner_radius=10
-        )
-        logo_frame.pack(side="left", padx=(0, 15))
-        logo_frame.pack_propagate(False)
+        ctk.CTkLabel(panel, text="Program input  (one value per line, used by input statements)",
+                     text_color=COLORS["muted"], font=ctk.CTkFont(size=12)).grid(row=2, column=0, sticky="w",
+                                                                                padx=16, pady=(10, 4))
+        self.stdin_box = self._text_widget(panel, editable=True, height=3)
+        self.stdin_box.master.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 14))
 
-        logo_label = ctk.CTkLabel(
-            logo_frame,
-            text="</>",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="white"
-        )
-        logo_label.pack(expand=True)
+    def _build_results_panel(self, body):
+        self.tabs = ctk.CTkTabview(body, fg_color=COLORS["panel"], corner_radius=12,
+                                   segmented_button_selected_color=COLORS["accent"],
+                                   segmented_button_selected_hover_color=COLORS["accent"])
+        self.tabs.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        self.views = {}
+        for name in ("Output", "Problems", "Tokens", "Syntax tree", "Build log"):
+            tab = self.tabs.add(name)
+            tab.grid_columnconfigure(0, weight=1)
+            tab.grid_rowconfigure(0, weight=1)
+            view = self._text_widget(tab, editable=False, wrap=name in ("Output", "Problems", "Build log"))
+            view.master.grid(row=0, column=0, sticky="nsew")
+            self.views[name] = view
+        self.tabs.set("Output")
+        self._write("Output", "Press Run to compile and run the program.\n", "muted")
 
-        # Title section
-        title_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
-        title_frame.pack(side="left")
+    def _text_widget(self, parent, editable, height=None, wrap=False):
+        """A dark, monospace tk.Text with scrollbars, inside its own frame."""
+        frame = ctk.CTkFrame(parent, fg_color=COLORS["editor"], corner_radius=8, height=20)  # size comes from the text
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+        text = tk.Text(frame, wrap="word" if wrap else "none", undo=editable, font=self.mono, relief="flat",
+                       borderwidth=0, highlightthickness=0, padx=10, pady=8, background=COLORS["editor"],
+                       foreground=COLORS["text"], insertbackground=COLORS["text"],
+                       selectbackground="#264f78", height=height or 10)
+        text.grid(row=0, column=0, sticky="nsew")
+        # Small requested sizes: the scrollbars stretch to fit, instead of forcing 200px
+        scroll = ctk.CTkScrollbar(frame, command=text.yview, height=20)
+        scroll.grid(row=0, column=1, sticky="ns", padx=(0, 2), pady=2)
+        text.configure(yscrollcommand=scroll.set)
+        if not wrap and height is None:
+            hscroll = ctk.CTkScrollbar(frame, orientation="horizontal", command=text.xview, width=20)
+            hscroll.grid(row=1, column=0, sticky="ew", padx=2, pady=(0, 2))
+            text.configure(xscrollcommand=hscroll.set)
+        for tag, color in (("muted", COLORS["muted"]), ("error", COLORS["red"]),
+                           ("ok", COLORS["ok"]), ("warn", COLORS["yellow"])):
+            text.tag_configure(tag, foreground=color)
+        if not editable:
+            text.configure(state="disabled")
+        return text
 
-        title_label = ctk.CTkLabel(
-            title_frame,
-            text="BeginnerScript Compiler Studio",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=self.colors["text_primary"]
-        )
-        title_label.pack(anchor="w")
+    # ------------------------------------------------------------ helpers
 
-        subtitle_label = ctk.CTkLabel(
-            title_frame,
-            text="Modern compiler interface with beautiful themes",
-            font=ctk.CTkFont(size=12),
-            text_color=self.colors["text_secondary"]
-        )
-        subtitle_label.pack(anchor="w")
+    def _load_start_program(self):
+        if os.path.isfile(START_PROGRAM):
+            with open(START_PROGRAM, encoding="utf-8") as f:
+                self.editor.insert("1.0", f.read())
+            self.file_label.configure(text="examples/input.txt")
+        self.stdin_box.insert("1.0", "Hafsa\n21")
 
-        # Right side - Theme buttons
-        right_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        right_frame.pack(side="right", padx=20, pady=15)
+    def _write(self, view, text, tag=None):
+        widget = self.views[view]
+        widget.configure(state="normal")
+        widget.insert("end", text, tag or ())
+        widget.configure(state="disabled")
+        widget.see("end")
 
-        # Theme label
-        theme_label = ctk.CTkLabel(
-            right_frame,
-            text="Theme:",
-            font=ctk.CTkFont(size=14),
-            text_color=self.colors["text_secondary"]
-        )
-        theme_label.pack(side="left", padx=(0, 10))
+    def _clear(self, *views):
+        for view in views:
+            widget = self.views[view]
+            widget.configure(state="normal")
+            widget.delete("1.0", "end")
+            widget.configure(state="disabled")
 
-        # Theme buttons
-        themes = [
-            ("Neural", self.colors["accent_blue"]),
-            ("Cyber", self.colors["accent_pink"]),
-            ("Matrix", self.colors["accent_green"])
-        ]
-        for theme_name, color in themes:
-            is_active = theme_name == self.current_theme
-            btn = ctk.CTkButton(
-                right_frame,
-                text=theme_name,
-                width=70,
-                height=35,
-                fg_color=color if is_active else self.colors["bg_tertiary"],
-                hover_color=color,
-                text_color="white",
-                font=ctk.CTkFont(size=12, weight="bold" if is_active else "normal"),
-                corner_radius=8,
-                command=lambda t=theme_name, c=color: self.change_theme(t, c)
-            )
-            btn.pack(side="left", padx=2)
-    
-    def create_sidebar(self):
-        # Sidebar frame
-        self.sidebar = ctk.CTkFrame(
-            self.main_container,
-            width=320,
-            fg_color=self.colors["bg_secondary"],
-            corner_radius=0
-        )
-        self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
-        self.sidebar.pack_propagate(False)
+    def set_status(self, text, color="muted"):
+        self.status.configure(text=text, text_color=COLORS.get(color, color))
 
-        # File Operations section
-        self.create_file_operations()
+    # ------------------------------------------------------------ compile and run
 
-        # File Status section
-        self.create_file_status()
+    def start(self, mode):
+        """mode is 'run' (compile and run) or 'check' (compile only)."""
+        if self.busy:
+            return
+        if shutil.which("java") is None:
+            messagebox.showerror("Java not found", "Install a JDK (Java 11 or newer), then restart Compiler Studio.")
+            return
+        self.busy = True
+        for button in (self.run_button, self.check_button):
+            button.configure(state="disabled")
+        self._clear("Output", "Problems", "Tokens", "Syntax tree")
+        self.set_status("Working...")
+        source = self.editor.get("1.0", "end-1c")
+        stdin = self.stdin_box.get("1.0", "end-1c")
+        if stdin and not stdin.endswith("\n"):
+            stdin += "\n"
+        threading.Thread(target=self._worker, args=(mode, source, stdin), daemon=True).start()
 
-        # Quick Actions section
-        self.create_quick_actions()
-
-    def create_file_operations(self):
-        # File Operations Header
-        ops_header = ctk.CTkLabel(
-            self.sidebar,
-            text="FILE OPERATIONS",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=self.colors["text_muted"]
-        )
-        ops_header.pack(anchor="w", padx=20, pady=(20, 15))
-
-        # File type buttons with modern styling
-        file_buttons = [
-            ("Scanner File", ".jflex", self.colors["accent_pink"], "Scanner"),
-            ("Parser File", ".cup", self.colors["accent_blue"], "Parser"),
-        ]
-        for text, ext, color, file_type in file_buttons:
-            # Button frame
-            btn_frame = ctk.CTkFrame(
-                self.sidebar,
-                fg_color=color,
-                corner_radius=12,
-                height=60
-            )
-            btn_frame.pack(fill="x", padx=20, pady=5)
-            btn_frame.pack_propagate(False)
-
-            # Make it clickable
-            btn_frame.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
-
-            # Also make child widgets clickable
-            content_frame = ctk.CTkFrame(btn_frame, fg_color="transparent")
-            # 8px top/bottom padding leaves room for both the name and the extension line
-            content_frame.pack(fill="both", expand=True, padx=15, pady=8)
-            content_frame.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
-
-            # File icon
-            icon_map = {"Scanner": "📄", "Parser": "⚙"}
-            icon_label = ctk.CTkLabel(
-                content_frame,
-                text=icon_map[file_type],
-                font=ctk.CTkFont(size=20),
-                text_color="white"
-            )
-            icon_label.pack(side="left")
-            icon_label.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
-
-            # Text content
-            text_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
-            text_frame.pack(side="left", fill="both", expand=True, padx=(10, 0))
-            text_frame.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
-
-            name_label = ctk.CTkLabel(
-                text_frame,
-                text=text,
-                font=ctk.CTkFont(size=14, weight="bold"),
-                text_color="white",
-                cursor="hand2"
-            )
-            name_label.pack(anchor="w")
-            name_label.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
-
-            ext_label = ctk.CTkLabel(
-                text_frame,
-                text=ext,
-                font=ctk.CTkFont(size=11),
-                text_color="white",
-                cursor="hand2"
-            )
-            ext_label.pack(anchor="w")
-            ext_label.bind("<Button-1>", lambda e, ft=file_type: self.select_file(ft))
-
-    def create_file_status(self):
-        # File Status Header
-        status_header = ctk.CTkLabel(
-            self.sidebar,
-            text="FILE STATUS",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=self.colors["text_muted"]
-        )
-        status_header.pack(anchor="w", padx=20, pady=(30, 15))
-
-        # Status container
-        self.status_frame = ctk.CTkFrame(
-            self.sidebar,
-            fg_color=self.colors["bg_tertiary"],
-            corner_radius=12
-        )
-        self.status_frame.pack(fill="x", padx=20, pady=(0, 20))
-
-        # Status items
-        self.status_labels = {}
-        for file_type in ["Scanner", "Parser"]:
-            # Status item frame
-            item_frame = ctk.CTkFrame(
-                self.status_frame,
-                fg_color="transparent"
-            )
-            item_frame.pack(fill="x", padx=15, pady=8)
-
-            # File type label
-            type_label = ctk.CTkLabel(
-                item_frame,
-                text=f"{file_type}:",
-                font=ctk.CTkFont(size=13, weight="bold"),
-                text_color=self.colors["text_primary"]
-            )
-            type_label.pack(side="left")
-
-            # Status label
-            status_label = ctk.CTkLabel(
-                item_frame,
-                text="❌ Not selected",
-                font=ctk.CTkFont(size=12),
-                text_color=self.colors["text_muted"]
-            )
-            status_label.pack(side="right")
-            self.status_labels[file_type] = status_label
-
-    def create_quick_actions(self):
-        # Quick Actions Header
-        actions_header = ctk.CTkLabel(
-            self.sidebar,
-            text="QUICK ACTIONS",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=self.colors["text_muted"]
-        )
-        actions_header.pack(anchor="w", padx=20, pady=(20, 15))
-
-        # Compile button
-        compile_btn = ctk.CTkButton(
-            self.sidebar,
-            text="🚀 Start Compilation",
-            width=280,
-            height=50,
-            fg_color=self.colors["accent_green"],
-            hover_color=self.adjust_color_brightness(self.colors["accent_green"], 0.8),
-            text_color="white",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            corner_radius=12,
-            command=self.start_compilation
-        )
-        compile_btn.pack(padx=20, pady=5)
-
-        # Action buttons row
-        btn_row = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=10)
-
-        clear_btn = ctk.CTkButton(
-            btn_row,
-            text="🧹 Clear",
-            width=130,
-            height=40,
-            fg_color=self.colors["bg_tertiary"],
-            hover_color=self.colors["accent_pink"],
-            font=ctk.CTkFont(size=12),
-            corner_radius=10,
-            command=self.clear_console
-        )
-        clear_btn.pack(side="left", padx=(0, 10))
-
-        save_btn = ctk.CTkButton(
-            btn_row,
-            text="💾 Save",
-            width=130,
-            height=40,
-            fg_color=self.colors["bg_tertiary"],
-            hover_color=self.colors["accent_blue"],
-            font=ctk.CTkFont(size=12),
-            corner_radius=10,
-            command=self.save_project
-        )
-        save_btn.pack(side="right")
-
-    def create_console_area(self):
-        # Console container
-        console_container = ctk.CTkFrame(
-            self.main_container,
-            fg_color=self.colors["bg_primary"],
-            corner_radius=0
-        )
-        console_container.pack(side="right", fill="both", expand=True, padx=20, pady=20)
-
-        # Console header
-        console_header = ctk.CTkFrame(
-            console_container,
-            height=60,
-            fg_color=self.colors["bg_card"],
-            corner_radius=12
-        )
-        console_header.pack(fill="x", pady=(0, 15))
-        console_header.pack_propagate(False)
-
-        # Console title
-        title_label = ctk.CTkLabel(
-            console_header,
-            text="📟 Console Output",
-            font=ctk.CTkFont(size=18, weight="bold"),
-            text_color=self.colors["text_primary"]
-        )
-        title_label.pack(side="left", padx=20, pady=15)
-
-        # Live indicator
-        live_frame = ctk.CTkFrame(
-            console_header,
-            fg_color=self.colors["accent_green"],
-            corner_radius=12
-        )
-        live_frame.pack(side="right", padx=20, pady=15)
-
-        live_label = ctk.CTkLabel(
-            live_frame,
-            text="🟢 Live",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="white"
-        )
-        live_label.pack(padx=12, pady=6)
-
-        # Console output area
-        self.console_frame = ctk.CTkScrollableFrame(
-            console_container,
-            fg_color=self.colors["bg_card"],
-            corner_radius=12
-        )
-        self.console_frame.pack(fill="both", expand=True)
-
-        # Add input text box at the bottom
-        input_label = ctk.CTkLabel(
-            console_container,
-            text="📝 Type your input below:",
-            font=ctk.CTkFont(size=12),
-            text_color=self.colors["text_secondary"]
-        )
-        input_label.pack(anchor="w", padx=20, pady=(10, 5))
-
-        self.input_textbox = ctk.CTkTextbox(
-            console_container,
-            height=100,
-            fg_color=self.colors["bg_card"],
-            text_color=self.colors["text_primary"],
-            font=ctk.CTkFont(size=13),
-            wrap="word"
-        )
-        self.input_textbox.pack(fill="x", padx=20, pady=(0, 10))
-
-        # Add initial console content
-        self.add_welcome_message()
-
-    def add_welcome_message(self):
-        welcome_text = ctk.CTkLabel(
-            self.console_frame,
-            text="✨ Welcome to BeginnerScript Compiler Studio!",
-            font=ctk.CTkFont(size=18, weight="bold"),
-            text_color=self.colors["text_primary"]
-        )
-        welcome_text.pack(anchor="w", padx=20, pady=(20, 5))
-
-        system_text = ctk.CTkLabel(
-            self.console_frame,
-            text="🧠 SYSTEM INITIALIZED - NEURAL NETWORK READY",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=self.colors["accent_green"]
-        )
-        system_text.pack(anchor="w", padx=20, pady=5)
-
-        instructions = [
-            "🎯 Ready to compile your language files with style and precision.",
-            "📂 Select your files using the sidebar to get started.",
-            f"🎨 Current theme: {self.current_theme}",
-            "",
-            "🚀 Compilation Process:",
-            "• Select Scanner file (.jflex) - Generates lexical analyzer",
-            "• Select Parser file (.cup) - Generates syntax analyzer",
-            "• Type your input directly below",
-            "• Click 'Start Compilation' for full processing",
-            "",
-            "💡 Pro tip: Try different themes to customize your experience!",
-            "",
-            "Let's build something amazing together! 🚀"
-        ]
-
-        for instruction in instructions:
-            if instruction == "":
-                spacer = ctk.CTkLabel(self.console_frame, text="", height=10)
-                spacer.pack()
-            elif instruction.startswith("🚀 Compilation Process:"):
-                feature_label = ctk.CTkLabel(
-                    self.console_frame,
-                    text=instruction,
-                    font=ctk.CTkFont(size=16, weight="bold"),
-                    text_color=self.colors["text_primary"]
-                )
-                feature_label.pack(anchor="w", padx=20, pady=(10, 5))
-            elif instruction.startswith("•"):
-                feature_label = ctk.CTkLabel(
-                    self.console_frame,
-                    text=instruction,
-                    font=ctk.CTkFont(size=13),
-                    text_color=self.colors["text_secondary"]
-                )
-                feature_label.pack(anchor="w", padx=40, pady=2)
-            elif instruction.startswith("Let's build"):
-                final_label = ctk.CTkLabel(
-                    self.console_frame,
-                    text=instruction,
-                    font=ctk.CTkFont(size=16, weight="bold"),
-                    text_color=self.colors["accent_cyan"]
-                )
-                final_label.pack(anchor="w", padx=20, pady=(10, 30))
-            else:
-                inst_label = ctk.CTkLabel(
-                    self.console_frame,
-                    text=instruction,
-                    font=ctk.CTkFont(size=14),
-                    text_color=self.colors["text_secondary"]
-                )
-                inst_label.pack(anchor="w", padx=20, pady=3)
-
-    def run_cmd(self, command):
-        """Execute command and display output in real-time"""
-        self.add_console_message(f"▶ Running: {command}", self.colors["accent_cyan"])
+    def _worker(self, mode, source, stdin):
+        """Runs in a background thread. It never touches widgets: it only posts events."""
         try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                shell=True,
-                text=True,
-                universal_newlines=True
-            )
+            if self._needs_build():
+                if not self._build_compiler():
+                    self.events.put(("build_failed",))
+                    return
+            program = os.path.join(BUILD, "program.txt")
+            with open(program, "w", encoding="utf-8") as f:
+                f.write(source)
+            command = ["java", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
+                       "-cp", os.pathsep.join([CUP_RUNTIME, CLASSES]), "Main", "--tokens", "--tree"]
+            if mode == "check":
+                command.append("--check")
+            result = subprocess.run(command + [program], input=stdin, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", cwd=PROJECT,
+                                    timeout=RUN_TIMEOUT_SECONDS, creationflags=NO_WINDOW)
+            self.events.put(("result", mode, result.returncode, result.stdout, result.stderr))
+        except subprocess.TimeoutExpired:
+            self.events.put(("timeout",))
+        except Exception as e:  # report anything unexpected instead of failing silently
+            self.events.put(("crash", str(e)))
+
+    def _needs_build(self):
+        main_class = os.path.join(CLASSES, "Main.class")
+        if not os.path.isfile(main_class):
+            return True
+        built = os.path.getmtime(main_class)
+        return any(os.path.getmtime(os.path.join(PROJECT, s)) > built for s in COMPILER_SOURCES)
+
+    def _build_compiler(self):
+        os.makedirs(GEN, exist_ok=True)
+        os.makedirs(CLASSES, exist_ok=True)
+        sources = [os.path.join(PROJECT, s) for s in COMPILER_SOURCES if s.endswith(".java")]
+        steps = [
+            ("JFlex: scanner.jflex", ["java", "-jar", JFLEX_JAR, "-q", "-d", GEN, "scanner.jflex"]),
+            ("CUP: parser.cup", ["java", "-jar", CUP_JAR, "-destdir", GEN, "parser.cup"]),
+            ("javac", ["javac", "-nowarn", "-encoding", "UTF-8", "-cp", CUP_RUNTIME, "-d", CLASSES] + sources
+             + [os.path.join(GEN, f) for f in ("MyScanner.java", "parser.java", "sym.java")]),
+        ]
+        self.events.put(("log", "Building the compiler...\n", "muted"))
+        for title, command in steps:
+            self.events.put(("log", "\n> " + title + "\n", "warn"))
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    cwd=PROJECT, creationflags=NO_WINDOW)
+            output = "\n".join(line for line in (result.stdout + result.stderr).splitlines()
+                               if not line.startswith("Picked up JAVA_TOOL_OPTIONS"))
+            if output.strip():
+                self.events.put(("log", output.rstrip() + "\n", None))
+            if result.returncode != 0:
+                self.events.put(("log", "\nBuild failed.\n", "error"))
+                return False
+        self.events.put(("log", "\nBuild OK.\n", "ok"))
+        return True
+
+    # ------------------------------------------------------------ results (main thread)
+
+    def _poll_events(self):
+        try:
             while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    self.add_console_message(output.strip(), self.colors["text_secondary"])
-                    self.root.update()
-            return_code = process.poll()
-            if return_code == 0:
-                self.add_console_message(f"✅ Command completed successfully", self.colors["accent_green"])
+                self._handle(self.events.get_nowait())
+        except queue.Empty:
+            pass
+        self.root.after(50, self._poll_events)
+
+    def _handle(self, event):
+        kind = event[0]
+        if kind == "log":
+            self._write("Build log", event[1], event[2])
+            return
+        if kind == "result":
+            self._show_result(*event[1:])
+        elif kind == "build_failed":
+            self.tabs.set("Build log")
+            self.set_status("The compiler could not be built. See the Build log tab.", "red")
+        elif kind == "timeout":
+            self._write("Output", "\nStopped: the program ran for more than %d seconds.\n" % RUN_TIMEOUT_SECONDS,
+                        "error")
+            self.tabs.set("Output")
+            self.set_status("Stopped after %d seconds" % RUN_TIMEOUT_SECONDS, "red")
+        elif kind == "crash":
+            self._write("Output", "\nCould not run the compiler: %s\n" % event[1], "error")
+            self.set_status("Could not run the compiler", "red")
+        self.busy = False
+        for button in (self.run_button, self.check_button):
+            button.configure(state="normal")
+
+    def _show_result(self, mode, code, stdout, stderr):
+        sections = {"tokens": [], "tree": [], "output": [], "other": []}
+        current = "other"
+        markers = {"=== Tokens ===": "tokens", "=== Syntax tree ===": "tree", "=== Program output ===": "output"}
+        for line in stdout.splitlines(keepends=True):
+            if line.strip() in markers:
+                current = markers[line.strip()]
+            elif line.startswith("No errors found in "):
+                sections["other"].append("No errors found.\n")  # printed by --check
             else:
-                self.add_console_message(f"❌ Command failed with return code: {return_code}", self.colors["accent_pink"])
-        except Exception as e:
-            self.add_console_message(f"❌ Error executing command: {str(e)}", self.colors["accent_pink"])
+                sections[current].append(line)
 
-    def copy_if_needed(self, path):
-        """Copy file to current directory if needed"""
-        filename = os.path.basename(path)
-        dest_path = os.path.abspath(filename)
-        if os.path.abspath(path) != dest_path:
-            try:
-                shutil.copy(path, dest_path)
-                self.add_console_message(f"📋 Copied {filename} to working directory", self.colors["accent_blue"])
-                return filename
-            except Exception as e:
-                self.add_console_message(f"❌ Error copying file: {str(e)}", self.colors["accent_pink"])
-                return None
-        return filename
+        self._write("Tokens", "".join(sections["tokens"]) or "No tokens.\n")
+        self._write("Syntax tree", "".join(sections["tree"]) or "No syntax tree (the program has errors).\n",
+                    None if sections["tree"] else "muted")
 
-    def select_file(self, file_type):
-        # Skip input file selection
-        if file_type == "Input":
-            self.add_console_message("💡 Input is now typed directly into the editor.", self.colors["text_muted"])
-            return
+        problems = []
+        for line in stderr.splitlines():
+            match = ERROR_LINE.match(line)
+            if match:
+                problems.append(match)
+            elif re.match(r"^\d+ errors? found in ", line):
+                continue  # the status bar shows the count
+            elif line.strip() and not line.startswith("Picked up JAVA_TOOL_OPTIONS"):
+                self._write("Problems", line + "\n", "muted")
+        for match in problems:
+            kind, line, column, message = match.groups()
+            self._write("Problems", "%s error  line %s, col %s\n" % (kind, line, column), "error")
+            self._write("Problems", "    %s\n\n" % message)
 
-        # File type extensions
-        extensions = {
-            "Scanner": [("JFlex files", "*.jflex"), ("All files", "*.*")],
-            "Parser": [("CUP files", "*.cup"), ("All files", "*.*")]
-        }
-        filename = filedialog.askopenfilename(
-            title=f"Select {file_type} File",
-            filetypes=extensions[file_type]
-        )
-        if filename:
-            self.file_status[file_type]["selected"] = True
-            self.file_status[file_type]["path"] = filename
-            self.status_labels[file_type].configure(
-                text="✅ Selected",
-                text_color=self.colors["accent_green"]
-            )
-            self.add_console_message(f"📁 {file_type} file selected: {os.path.basename(filename)}")
+        output = "".join(sections["output"] + sections["other"])
+        if output:
+            self._write("Output", output)
+        runtime = [m for m in problems if m.group(1) == "Runtime"]
+        if runtime:
+            self._write("Output", "\n" + runtime[0].group(0) + "\n", "error")
 
-            # Process file immediately based on type
-            if file_type == "Scanner":
-                self.process_scanner_file(filename)
-            elif file_type == "Parser":
-                self.process_parser_file(filename)
-
-    def process_scanner_file(self, path):
-        self.add_console_message("🔍 Processing Scanner file...", self.colors["accent_pink"])
-        def process():
-            filename = self.copy_if_needed(path)
-            if filename:
-                self.run_cmd(f"jflex {filename}")
-        thread = threading.Thread(target=process, daemon=True)
-        thread.start()
-
-    def process_parser_file(self, path):
-        self.add_console_message("⚙ Processing Parser file...", self.colors["accent_blue"])
-        def process():
-            filename = self.copy_if_needed(path)
-            if filename:
-                self.run_cmd(f"java java_cup.MainDrawTree {filename}")
-        thread = threading.Thread(target=process, daemon=True)
-        thread.start()
-
-    def process_input_file(self):
-        self.add_console_message("📝 Saving typed input...", self.colors["accent_green"])
-        content = self.input_textbox.get("1.0", "end-1c")
-        filename = "user_input.txt"
-        try:
-            with open(filename, 'w') as f:
-                f.write(content)
-            self.add_console_message(f"💾 Created input file: {filename}", self.colors["accent_blue"])
-            self.file_status["Input"]["selected"] = True
-            self.file_status["Input"]["path"] = os.path.abspath(filename)
-        except Exception as e:
-            self.add_console_message(f"❌ Error saving input: {str(e)}", self.colors["accent_pink"])
-
-    def start_compilation(self):
-        missing_files = [ft for ft in ["Scanner", "Parser"] if not self.file_status[ft]["selected"]]
-        if missing_files:
-            messagebox.showwarning("Missing Files", f"Please select: {', '.join(missing_files)}")
-            return
-
-        self.add_console_message("🚀 Starting full compilation process...", self.colors["accent_purple"])
-
-        def full_compile_process():
-            try:
-                scanner_path = self.file_status["Scanner"]["path"]
-                self.add_console_message("Step 1: Processing Scanner file...", self.colors["accent_pink"])
-                scanner_filename = self.copy_if_needed(scanner_path)
-                if scanner_filename:
-                    self.run_cmd(f"jflex {scanner_filename}")
-
-                parser_path = self.file_status["Parser"]["path"]
-                self.add_console_message("Step 2: Processing Parser file...", self.colors["accent_blue"])
-                parser_filename = self.copy_if_needed(parser_path)
-                if parser_filename:
-                    self.run_cmd(f"java java_cup.MainDrawTree {parser_filename}")
-
-                self.add_console_message("Step 3: Compiling Java files...", self.colors["accent_cyan"])
-                self.run_cmd("javac *.java")
-
-                self.add_console_message("Step 4: Saving and running with typed input...", self.colors["accent_green"])
-                self.process_input_file()
-                input_filename = self.file_status["Input"]["path"]
-                if input_filename:
-                    self.run_cmd(f"java Main {os.path.basename(input_filename)}")
-
-                self.add_console_message("🎉 Full compilation process completed!", self.colors["accent_purple"])
-            except Exception as e:
-                self.add_console_message(f"❌ Compilation error: {str(e)}", self.colors["accent_pink"])
-
-        thread = threading.Thread(target=full_compile_process, daemon=True)
-        thread.start()
-
-    def clear_console(self):
-        for widget in self.console_frame.winfo_children():
-            widget.destroy()
-        self.add_welcome_message()
-
-    def save_project(self):
-        self.add_console_message("💾 Project configuration saved successfully!", self.colors["accent_blue"])
-
-    def add_console_message(self, message, color=None):
-        if color is None:
-            color = self.colors["text_secondary"]
-        import datetime
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-        msg_frame = ctk.CTkFrame(self.console_frame, fg_color="transparent")
-        msg_frame.pack(fill="x", padx=20, pady=1)
-        time_label = ctk.CTkLabel(
-            msg_frame,
-            text=f"[{timestamp}]",
-            font=ctk.CTkFont(size=10),
-            text_color=self.colors["text_muted"]
-        )
-        time_label.pack(side="left", padx=(0, 10))
-        msg_label = ctk.CTkLabel(
-            msg_frame,
-            text=message,
-            font=ctk.CTkFont(size=13),
-            text_color=color
-        )
-        msg_label.pack(side="left", anchor="w")
-        self.root.after(100, lambda: self.console_frame._parent_canvas.yview_moveto(1.0))
-
-    def change_theme(self, theme_name, color):
-        self.current_theme = theme_name
-        self.add_console_message(f"🎨 Theme changed to: {theme_name}", color)
-
-    def adjust_color_brightness(self, hex_color, factor):
-        hex_color = hex_color.lstrip('#')
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        rgb = tuple(int(c * factor) for c in rgb)
-        rgb = tuple(min(255, max(0, c)) for c in rgb)
-        return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+        compile_errors = len(problems) - len(runtime)
+        if compile_errors:
+            self.tabs.set("Problems")
+            self.set_status("%d %s found" % (compile_errors, "problem" if compile_errors == 1 else "problems"), "red")
+        elif runtime:
+            self.tabs.set("Output")
+            self.set_status("Runtime error on line %s" % runtime[0].group(2), "red")
+        elif code != 0:
+            self.tabs.set("Problems")
+            self.set_status("The compiler stopped with exit code %d" % code, "red")
+        else:
+            self._write("Problems", "No problems found.\n", "ok")
+            self.tabs.set("Output")
+            self.set_status("No errors found" if mode == "check" else "Program finished", "ok")
 
     def run(self):
         self.root.mainloop()
 
 
-# Create and run the application
 if __name__ == "__main__":
-    app = ModernCompilerInterface()
-    app.run()
+    CompilerStudio().run()
