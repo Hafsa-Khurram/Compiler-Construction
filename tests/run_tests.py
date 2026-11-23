@@ -89,6 +89,12 @@ CASES = [
      "Semantic error at line 7, column 1: function 'greet' needs 1 argument but was given 0\n"
      "5 errors found in program.txt\n"),
 
+    ("storing a parameter again is explained",
+     "function greet(name) [\n  store name;\n  display [name];\n]\ngreet(\"Atta\");\n", "", 1, "",
+     "Semantic error at line 2, column 3: 'name' is already a parameter of function 'greet' "
+     "(use set name = ...; to change it)\n"
+     "1 error found in program.txt\n"),
+
     ("division by zero stops the program",
      "store x;\nset x = 0;\ndisplay [\"before\"];\ndisplay [10 / x];\ndisplay [\"not shown\"];\n", "", 3,
      "before\n", "Runtime error at line 4, column 13: division by zero\n"),
@@ -97,6 +103,11 @@ CASES = [
      "store x;\nset x = 1;\nwhile x > 0 [ set x = x + 1; ]\n", "", 3, "",
      "Runtime error at line 3, column 1: this while loop has run 100000 times; "
      "does its condition ever become false?\n"),
+
+    ("non-English text in input and output",
+     "store name;\ninput \"Naam: \" into name;\ndisplay [\"Salam, \" + name + \" \u2713\"];\n",
+     "\u062d\u0641\u0635\u06c1\n", 0,
+     "Naam: \u062d\u0641\u0635\u06c1\nSalam, \u062d\u0641\u0635\u06c1 \u2713\n", ""),
 
     ("missing program input",
      "store n;\ninput \"Number: \" into n;\n", "", 3, "Number: \n",
@@ -114,7 +125,7 @@ def build():
 
 def run(program_path, stdin):
     result = subprocess.run(["java", "-cp", CLASSPATH, "Main", program_path], cwd=ROOT,
-                            input=stdin, capture_output=True, text=True)
+                            input=stdin, capture_output=True, text=True, encoding="utf-8")
     clean = lambda s: "\n".join(l for l in s.replace("\r\n", "\n").split("\n")
                                 if not l.startswith("Picked up JAVA_TOOL_OPTIONS"))
     return result.returncode, clean(result.stdout), clean(result.stderr)

@@ -272,7 +272,9 @@ class CompilerStudio:
             if info is None:
                 break
             number = index.split(".")[0]
-            self.gutter.create_text(36, info[1] + info[3] // 2, anchor="e", text=number,
+            # Align with the top of the line: dlineinfo's height is clipped for a half-visible
+            # line, so centring on it pushed the last number onto the one above it
+            self.gutter.create_text(36, info[1], anchor="ne", text=number,
                                     fill=COLORS["line_numbers"], font=self.mono)
             index = self.editor.index(index + "+1line")
             if self.editor.compare(index, "==", "end"):
