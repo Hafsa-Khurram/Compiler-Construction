@@ -85,7 +85,7 @@ run.bat --tokens --tree examples\input.txt
 ```bash
 python tests/run_tests.py
 ```
-Builds the compiler and runs 14 test programs (the examples plus programs with lexical, syntax, semantic and runtime errors), checking their exact output.
+Builds the compiler and runs 16 test programs (the examples, programs with lexical, syntax, semantic and runtime errors, and one with Urdu text), checking their exact output.
 
 ---
 
@@ -104,6 +104,7 @@ Builds the compiler and runs 14 test programs (the examples plus programs with l
 | Function | `function greet(name) [ display ["Hi " + name]; ]` |
 | Call | `greet("Hafsa");` |
 
+- Text can contain any characters, including Urdu (`display ["Salam, " + name + " ✓"];`).
 - Values are whole numbers or text. `+` adds numbers or joins text; `- * /` work on numbers (`7 / 2` is `3`).
 - Comparisons: `>  <  >=  <=  ==  !=` (`==` and `!=` also compare text).
 - Variables in the main program are global; each function call has its own local variables and parameters.
