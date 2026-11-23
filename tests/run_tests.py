@@ -89,6 +89,12 @@ CASES = [
      "Semantic error at line 7, column 1: function 'greet' needs 1 argument but was given 0\n"
      "5 errors found in program.txt\n"),
 
+    ("storing a parameter again is explained",
+     "function greet(name) [\n  store name;\n  display [name];\n]\ngreet(\"Atta\");\n", "", 1, "",
+     "Semantic error at line 2, column 3: 'name' is already a parameter of function 'greet' "
+     "(use set name = ...; to change it)\n"
+     "1 error found in program.txt\n"),
+
     ("division by zero stops the program",
      "store x;\nset x = 0;\ndisplay [\"before\"];\ndisplay [10 / x];\ndisplay [\"not shown\"];\n", "", 3,
      "before\n", "Runtime error at line 4, column 13: division by zero\n"),

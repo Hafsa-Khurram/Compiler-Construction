@@ -98,7 +98,11 @@ public class Semantic {
     if (s instanceof Ast.Store) {
       Ast.Store st = (Ast.Store) s;
       Ast.Node earlier = scope.names.get(st.name);
-      if (earlier != null) {
+      if (earlier instanceof Ast.Function) {
+        // Parameters are recorded with their function node
+        error(st, "'" + st.name + "' is already a parameter of function '" + ((Ast.Function) earlier).name
+            + "' (use set " + st.name + " = ...; to change it)");
+      } else if (earlier != null) {
         error(st, "variable '" + st.name + "' is already stored at line " + earlier.line);
       } else {
         scope.names.put(st.name, st);
