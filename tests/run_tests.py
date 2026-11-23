@@ -98,6 +98,11 @@ CASES = [
      "Runtime error at line 3, column 1: this while loop has run 100000 times; "
      "does its condition ever become false?\n"),
 
+    ("non-English text in input and output",
+     "store name;\ninput \"Naam: \" into name;\ndisplay [\"Salam, \" + name + \" \u2713\"];\n",
+     "\u062d\u0641\u0635\u06c1\n", 0,
+     "Naam: \u062d\u0641\u0635\u06c1\nSalam, \u062d\u0641\u0635\u06c1 \u2713\n", ""),
+
     ("missing program input",
      "store n;\ninput \"Number: \" into n;\n", "", 3, "Number: \n",
      "Runtime error at line 2, column 1: no input left for 'n' (type one value per line in the program input)\n"),
@@ -114,7 +119,7 @@ def build():
 
 def run(program_path, stdin):
     result = subprocess.run(["java", "-cp", CLASSPATH, "Main", program_path], cwd=ROOT,
-                            input=stdin, capture_output=True, text=True)
+                            input=stdin, capture_output=True, text=True, encoding="utf-8")
     clean = lambda s: "\n".join(l for l in s.replace("\r\n", "\n").split("\n")
                                 if not l.startswith("Picked up JAVA_TOOL_OPTIONS"))
     return result.returncode, clean(result.stdout), clean(result.stderr)
