@@ -34,6 +34,14 @@ public class Main {
     }
     if (path == null) usage(null);
 
+    // When the output is piped (Compiler Studio, the tests, "> file"), use UTF-8 so text such as
+    // Urdu names or symbols is not turned into '?'. Java 11-17 on Windows would otherwise use Cp1252.
+    boolean typedByPerson = System.console() != null;
+    if (!typedByPerson) {
+      System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, StandardCharsets.UTF_8));
+      System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, StandardCharsets.UTF_8));
+    }
+
     File file = new File(path);
     if (!file.isFile()) {
       System.err.println("File not found: " + path);
@@ -79,8 +87,10 @@ public class Main {
       // Execution
       if (showTokens || showTree) System.out.println("=== Program output ===");
       System.out.flush();
-      BufferedReader stdin = new BufferedReader(new InputStreamReader(System.in));
-      boolean typedByPerson = System.console() != null;
+      // Piped input (Compiler Studio's program input box) is UTF-8; a console uses its own encoding
+      BufferedReader stdin = new BufferedReader(typedByPerson
+          ? new InputStreamReader(System.in)
+          : new InputStreamReader(System.in, StandardCharsets.UTF_8));
       try {
         new Interpreter(stdin, System.out, !typedByPerson).run(program);
       } catch (Interpreter.RuntimeError e) {
